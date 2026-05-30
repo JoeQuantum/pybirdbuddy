@@ -68,6 +68,7 @@ fragment ListMemberFeederFields on FeederForMember {
   locationCity
   locationCountry
   ownerName
+  housingType
   version
   __typename
 }
@@ -114,6 +115,7 @@ fragment ListOwnerFeederFields on FeederForOwner {
   powerProfile
   presenceUpdatedAt
   serialNumber
+  housingType
   version
   members {
     ...FeederMemberFields

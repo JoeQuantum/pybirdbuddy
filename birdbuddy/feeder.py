@@ -52,6 +52,21 @@ class FeederDeviceVersion(Enum):
         return FeederDeviceVersion.UNKNOWN
 
 
+class FeederHousingType(Enum):
+    """Feeder housing / form factor."""
+
+    CLASSIC = "CLASSIC"
+    HUMMINGBIRD = "HUMMINGBIRD"
+    BIRD_BATH = "BIRD_BATH"
+
+    UNKNOWN = "UNKNOWN"
+
+    @classmethod
+    def _missing_(cls, value: str):
+        LOGGER.warning("Unexpected housing type: %s", value)
+        return FeederHousingType.UNKNOWN
+
+
 class FeederState(Enum):
     """Feeder states."""
 
@@ -167,6 +182,11 @@ class Feeder(UserDict[str, any]):
         this addition; only the docstrings disambiguate.
         """
         return FeederDeviceVersion(self.get("version", "UNKNOWN"))
+
+    @property
+    def housing_type(self) -> FeederHousingType:
+        """Feeder housing / form factor (CLASSIC, HUMMINGBIRD, BIRD_BATH)."""
+        return FeederHousingType(self.get("housingType", "UNKNOWN"))
 
     @property
     def state(self) -> FeederState:
