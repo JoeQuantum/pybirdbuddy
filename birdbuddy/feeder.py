@@ -37,6 +37,21 @@ class PowerProfile(Enum):
         return PowerProfile.UNKNOWN
 
 
+class FeederDeviceVersion(Enum):
+    """Feeder hardware versions / models."""
+
+    V1 = "V1"
+    V1_PRO = "V1_PRO"
+    V2 = "V2"
+
+    UNKNOWN = "UNKNOWN"
+
+    @classmethod
+    def _missing_(cls, value: str):
+        LOGGER.warning("Unexpected device version: %s", value)
+        return FeederDeviceVersion.UNKNOWN
+
+
 class FeederState(Enum):
     """Feeder states."""
 
@@ -140,6 +155,18 @@ class Feeder(UserDict[str, any]):
     def version_update_available(self) -> str:
         """Firmware update version (owner only)."""
         return self.get("availableFirmwareVersion", None)
+
+    @property
+    def device_version(self) -> FeederDeviceVersion:
+        """Hardware model (V1, V1_PRO, V2).
+
+        Naming-collision warning: `Feeder.version` (above) is the *firmware*
+        version string (e.g. "1.8.1") and is unrelated to this hardware enum,
+        despite the GraphQL schema's `version` field on `Feeder` mapping to
+        THIS property (FeederDeviceVersion), not that one. Both names predate
+        this addition; only the docstrings disambiguate.
+        """
+        return FeederDeviceVersion(self.get("version", "UNKNOWN"))
 
     @property
     def state(self) -> FeederState:

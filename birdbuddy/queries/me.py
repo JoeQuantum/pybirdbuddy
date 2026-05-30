@@ -46,6 +46,7 @@ fragment ListMemberFeederFields on FeederForMember {
   locationCity
   locationCountry
   ownerName
+  version
   __typename
 }
 fragment ListFeederFields on FeederForPrivate {
@@ -83,6 +84,7 @@ fragment ListOwnerFeederFields on FeederForOwner {
   audioEnabled
   powerProfile
   presenceUpdatedAt
+  version
   members {
     ...FeederMemberFields
     __typename
