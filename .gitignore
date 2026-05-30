@@ -132,3 +132,12 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Local working artifacts (schema.json is the real deliverable and stays tracked)
+.DS_Store
+queries-extracted/
+schema-2023.graphql
+schema-2023.json
+schema-new.graphql
+schema.graphql
+scratch_98_repro.py
