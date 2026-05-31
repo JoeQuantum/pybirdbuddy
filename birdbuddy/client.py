@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime
 
+import aiohttp
 import langcodes
 from python_graphql_client import GraphqlClient
 
@@ -188,11 +190,15 @@ class BirdBuddy:
             query.partition("\n")[0],  # First line of query
             _redact(variables, should_redact),
         )
-        response = await self.graphql.execute_async(
-            query=query,
-            variables=variables,
-            headers=headers,
-        )
+        try:
+            response = await self.graphql.execute_async(
+                query=query,
+                variables=variables,
+                headers=headers,
+            )
+        except (aiohttp.ClientError, json.JSONDecodeError) as err:
+            LOGGER.warning("GraphQL request failed with non-JSON response: %s", err)
+            raise NoResponseError from err
 
         if not response or not isinstance(response, dict):
             raise NoResponseError

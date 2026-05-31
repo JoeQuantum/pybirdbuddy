@@ -20,6 +20,7 @@ setuptools.setup(
     packages=setuptools.find_packages(),
     python_requires='>=3.10',
     install_requires=[
+        "aiohttp",
         "python-graphql-client",
         "langcodes",
     ],
