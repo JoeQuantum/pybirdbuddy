@@ -20,6 +20,11 @@ class SightingFinishStrategy(Enum):
     BEST_GUESS = "best_guess"
     MYSTERY = "mystery"
 
+    @classmethod
+    def _missing_(cls, value: str) -> SightingFinishStrategy:
+        LOGGER.warning("Unexpected SightingFinishStrategy: %s", value)
+        return cls.MYSTERY
+
     def finish(self, data: dict = None) -> SightingFinishMod:
         """Wrap the strategy with additional metadata if needed"""
         if self == SightingFinishStrategy.BEST_GUESS:
