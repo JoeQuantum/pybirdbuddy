@@ -1,0 +1,60 @@
+{
+  "__typename": "FeedItemCollectedPostcard",
+  "id": "fixture-id-012",
+  "species": [
+    {
+      "id": "fixture-id-013",
+      "name": "Fixture name"
+    }
+  ],
+  "hasMysteryVisitor": false,
+  "hasNewSpecies": false,
+  "inferenceExecutionMode": "MANUAL_COMPLETED",
+  "mediaSpeciesAssignedName": null,
+  "medias": [
+    {
+      "__typename": "MediaImage",
+      "id": "fixture-id-014"
+    },
+    {
+      "__typename": "MediaImage",
+      "id": "fixture-id-015"
+    },
+    {
+      "__typename": "MediaImage",
+      "id": "fixture-id-016"
+    },
+    {
+      "__typename": "MediaImage",
+      "id": "fixture-id-017"
+    },
+    {
+      "__typename": "MediaImage",
+      "id": "fixture-id-018"
+    },
+    {
+      "__typename": "MediaImage",
+      "id": "fixture-id-019"
+    },
+    {
+      "__typename": "MediaImage",
+      "id": "fixture-id-020"
+    },
+    {
+      "__typename": "MediaImage",
+      "id": "fixture-id-021"
+    },
+    {
+      "__typename": "MediaImage",
+      "id": "fixture-id-022"
+    },
+    {
+      "__typename": "MediaImage",
+      "id": "fixture-id-023"
+    },
+    {
+      "__typename": "MediaVideo",
+      "id": "fixture-id-024"
+    }
+  ]
+}

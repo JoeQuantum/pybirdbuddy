@@ -1,0 +1,70 @@
+{
+  "origin": "Copied selected fixtures from ha-birdbuddy commit a2c4dce. Synthetic fixtures are not observed account responses.",
+  "schema_retrieved_at": "2026-11-13T19:09:10Z",
+  "public_source_license": "MIT-0 / MIT No Attribution (jhansche/pybirdbuddy)",
+  "fixtures": {
+    "feed_variants.json": {
+      "root_type": "FeedConnection",
+      "origin": "synthetic_from_live_schema",
+      "purpose": "Nested collection.species, singular/plural media, explicit collection feeder attribution, mystery/null and new/collected variants.",
+      "sha256": "39dd6dc3131cff0b3d75b83df36c58f6531d469a3b2533ca4bdf53ad084b4961"
+    },
+    "public_postcard_analysis.json": {
+      "root_type": "FeedItemNewPostcard",
+      "origin": "public_capture_resanitized",
+      "purpose": "Modern analysis result with five images, one video and recognized preview species. Structure and media cardinality retained.",
+      "source_url": "https://github.com/jhansche/pybirdbuddy/blob/207ed47578016e7223708e94d36a6b5be8c3c1e4/tests/fixtures/collect_flow.json",
+      "source_sha256": "0813c97467faac0e2acf6bd60d425dbfa6c25cd61d759dfbd71a472455d5df32",
+      "sha256": "0406c60621229da81892b676912e7b8a2fbcd3ae4d99fb9cf11838f968bed684"
+    },
+    "public_collected_partial.json": {
+      "root_type": "FeedItemCollectedPostcard",
+      "origin": "public_capture_resanitized",
+      "purpose": "Deliberately partial public collected result: eleven assets have IDs/types only. Tests must not assume content URLs or timestamps are present.",
+      "source_url": "https://github.com/jhansche/pybirdbuddy/blob/207ed47578016e7223708e94d36a6b5be8c3c1e4/tests/fixtures/collect_flow.json",
+      "source_sha256": "0813c97467faac0e2acf6bd60d425dbfa6c25cd61d759dfbd71a472455d5df32",
+      "sha256": "0045478a8892c56a44e3254ad24c58611f0338f8a4c397044adbc5edbcd315bf"
+    },
+    "postcard_complete.json": {
+      "root_type": "FeedItemNewPostcard",
+      "origin": "synthetic_from_live_schema",
+      "purpose": "Full selected-shape card with explicit feeder, two images and video; use for event/share/media preservation.",
+      "sha256": "bbf8b6dc8e47bb2312a5f47d86cbd35a18e65bcd780b6918ea859701b4636ed4"
+    },
+    "postcard_video_only.json": {
+      "root_type": "FeedItemNewPostcard",
+      "origin": "synthetic_from_live_schema",
+      "purpose": "Video-only card: future normalizer and events must not silently drop the sole asset.",
+      "sha256": "20ac519e945d67bf7bc9c1f008491e100be561f97a493c76f902337ea58ded89"
+    },
+    "postcard_unrecognized.json": {
+      "root_type": "FeedItemNewPostcard",
+      "origin": "synthetic_from_live_schema",
+      "purpose": "A HIGH_CONFIDENCE card can have no recognized species; inference flag is not evidence of a bird.",
+      "sha256": "50bdc56f1ce7dbf3c7d956d9586d08611e8e0a5a8de5ffff907e22e26cf99c55"
+    },
+    "postcard_long_urls.json": {
+      "root_type": "FeedItemNewPostcard",
+      "origin": "synthetic_adversarial",
+      "purpose": "Large but schema-valid mixed-media card above32KiB; padding is harmless placeholder text, not an actual signature.",
+      "schema_valid": true,
+      "sha256": "44658715eeac19cd02696f3ffde649f080f12c2ca1e165f95f6c844070943ba8"
+    },
+    "feed_unknown_type.json": {
+      "root_type": "FeedConnection",
+      "origin": "synthetic_adversarial",
+      "purpose": "Invented future union member; intentionally outside current schema to test graceful unknown-type handling.",
+      "schema_valid": false,
+      "expected_schema_error": "unexpected type FeedItemFutureVisitor",
+      "sha256": "fff0bb25fa629e214426589138fbbde832babb133f6a4f420ba3561209568ab6"
+    },
+    "feed_malformed_timestamp.json": {
+      "root_type": "FeedConnection",
+      "origin": "synthetic_adversarial",
+      "purpose": "Selected non-null createdAt is intentionally null to exercise backend/schema-drift tolerance.",
+      "schema_valid": false,
+      "expected_schema_error": "unexpected null",
+      "sha256": "e73ec715da35582137434d0477cfde8776888ae297cee8497db66fd394698ebd"
+    }
+  }
+}

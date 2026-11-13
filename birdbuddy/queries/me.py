@@ -1,5 +1,7 @@
 """Queries related to the logged in user."""
 
+from birdbuddy.queries.visits import _VISIT_FRAGMENTS
+
 ME = """
 query me {
   me {
@@ -112,7 +114,8 @@ fragment FeederForMemberPendingFields on FeederForMemberPending {
 }
 """.strip()
 
-FEED = """
+FEED = (
+    """
 query meFeed($first: Int, $last: Int, $after: String, $before: String) {
   me {
     feed(first: $first, last: $last, after: $after, before: $before) {
@@ -140,6 +143,7 @@ fragment FeedConnectionFields on FeedConnection {
 }
 fragment AnyFeedItemFields on AnyFeedItem {
   ... on FeedItem {
+    ...VisitReadFields
     id
     createdAt
     __typename
@@ -385,6 +389,8 @@ fragment NewPostcardFields on FeedItemNewPostcard {
   __typename
 }
 """.strip()
+    + _VISIT_FRAGMENTS
+)
 
 COLLECTIONS = """
 query meCollections {

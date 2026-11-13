@@ -1,0 +1,52 @@
+{
+  "__typename": "FeedConnection",
+  "edges": [
+    {
+      "__typename": "FeedEdge",
+      "cursor": "cursor-missing-date",
+      "node": {
+        "__typename": "FeedItemSpeciesSighting",
+        "id": "missing-date",
+        "createdAt": null,
+        "media": {
+          "__typename": "MediaImage",
+          "id": "image-a",
+          "createdAt": "2026-01-01T12:00:00.000Z",
+          "thumbnailUrl": "https://example.invalid/feeder-a/image-a.jpg?Expires=4102444800",
+          "contentUrl": "https://example.invalid/feeder-a/image-a.jpg?Expires=4102444800"
+        },
+        "collection": {
+          "__typename": "CollectionBird",
+          "id": "collection-feeder-a",
+          "species": {
+            "__typename": "SpeciesBird",
+            "id": "species-cardinal",
+            "name": "Northern Cardinal",
+            "iconUrl": "https://example.invalid/species/species-cardinal"
+          },
+          "coverCollectionMedia": {
+            "__typename": "CollectionMedia",
+            "id": "cover-feeder-a",
+            "feeder": {
+              "__typename": "FeederForOwner",
+              "id": "feeder-a",
+              "name": "Fixture Feeder feeder-a"
+            },
+            "media": {
+              "__typename": "MediaImage",
+              "id": "image-a",
+              "createdAt": "2026-01-01T12:00:00.000Z",
+              "thumbnailUrl": "https://example.invalid/feeder-a/image-a.jpg?Expires=4102444800",
+              "contentUrl": "https://example.invalid/feeder-a/image-a.jpg?Expires=4102444800"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "pageInfo": {
+    "__typename": "PageInfo",
+    "hasNextPage": false,
+    "endCursor": null
+  }
+}

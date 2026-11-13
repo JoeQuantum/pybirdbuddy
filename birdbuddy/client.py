@@ -47,6 +47,7 @@ from birdbuddy.sightings import (
 )
 from birdbuddy.transport import BirdBuddyGraphqlClient, HttpResponseError
 from birdbuddy.user import BirdBuddyUser
+from birdbuddy.visits import Visit, normalize_visit
 
 _NO_VALUE = object()
 """Sentinel value to allow None to override a default value."""
@@ -705,6 +706,20 @@ class BirdBuddy:
         ``sighting_from_postcard``.
         """
         return await self.feed_nodes(FeedNodeType.NewPostcard)
+
+    async def get_feed_item(self, feed_item_id: str) -> Visit:
+        """Read complete selected media/species without identification or collection."""
+        if not isinstance(feed_item_id, str) or not feed_item_id:
+            msg = "A nonempty feed item ID is required"
+            raise ValueError(msg)
+        result = await self._make_request(
+            query=queries.visits.DETAIL,
+            variables={"feedItemId": feed_item_id},
+            subscript="feedItem",
+        )
+        if result.get("id") != feed_item_id:
+            raise UnexpectedResponseError
+        return normalize_visit(result, known_feeder_ids=tuple(self._feeders))
 
     def _postcard_id(self, postcard: str | FeedNode) -> str:
         """Resolve a postcard argument to its feed-item id.
