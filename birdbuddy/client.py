@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
+from copy import deepcopy
 from datetime import datetime
 import json
 from math import isfinite
@@ -43,6 +44,9 @@ from birdbuddy.feeder import (
     FeederControlUnavailableError,
     FeederOptions,
     FeederUpdateStatus,
+    FirmwareUpdateBusyError,
+    FirmwareUpdatePreconditionError,
+    FirmwareUpdateUnknownStateError,
     PowerProfile,
     validate_feeder_options,
 )
@@ -138,7 +142,9 @@ class BirdBuddy:
         self._feed_checkpoint = FeedCheckpoint()
         self._pending_feed_batch: FeedBatch | None = None
         self._feed_lock = asyncio.Lock()
+        self._firmware_start_locks: dict[str, asyncio.Lock] = {}
         self._feeders = {}
+        self._feeders_loaded = False
         self._collections = {}
         self._collections_lock = asyncio.Lock()
         self._collections_loaded = False
@@ -151,18 +157,45 @@ class BirdBuddy:
         self.language_code = "en"
 
     def _save_me(self, me_data: dict) -> bool:
+        """Reconcile an authoritative account snapshot without stale role fields."""
         if not me_data:
             return False
-        me_data["__last_updated"] = datetime.now()
-        self._me = BirdBuddyUser(me_data["user"])
-        # pylint: disable=invalid-name
-        for f in me_data.get("feeders", []):
-            if f["id"] in self._feeders:
-                # Refresh Feeder data inline
-                self._feeders[f["id"]].update(f)
+        user, feeders = self._validate_account_snapshot(me_data)
+        if self._me is not None and self._me.id != user["id"]:
+            self._feeders.clear()
+        for feeder_id in self._feeders.keys() - feeders.keys():
+            del self._feeders[feeder_id]
+        for feeder_id, data in feeders.items():
+            if feeder_id in self._feeders:
+                self._feeders[feeder_id].clear()
+                self._feeders[feeder_id].update(data)
             else:
-                self._feeders[f["id"]] = Feeder(f)
+                self._feeders[feeder_id] = Feeder(data)
+        self._me = BirdBuddyUser(user)
+        self._feeders_loaded = True
         return True
+
+    @staticmethod
+    def _validate_account_snapshot(data: dict) -> tuple[dict, dict[str, dict]]:
+        """Validate the entire list before any account or feeder cache changes."""
+        if not isinstance(data, dict):
+            raise UnexpectedResponseError()
+        user, rows = data.get("user"), data.get("feeders")
+        if not isinstance(user, dict) or not isinstance(rows, list):
+            raise UnexpectedResponseError(data)
+        if not isinstance(user.get("id"), str) or not user["id"]:
+            raise UnexpectedResponseError(data)
+        feeders = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                raise UnexpectedResponseError(data)
+            feeder_id, role = row.get("id"), row.get("__typename")
+            if not isinstance(feeder_id, str) or not feeder_id:
+                raise UnexpectedResponseError(data)
+            if not isinstance(role, str) or not role or feeder_id in feeders:
+                raise UnexpectedResponseError(data)
+            feeders[feeder_id] = deepcopy(row)
+        return deepcopy(user), feeders
 
     def _needs_login(self) -> bool:
         return self._refresh_token is None
@@ -478,22 +511,24 @@ class BirdBuddy:
 
     async def _control_feeder(self, feeder: Feeder | str) -> Feeder:
         """Resolve an explicit owner role before any mutation."""
+        await self._check_auth()
         if isinstance(feeder, Feeder):
-            selected = self._feeders.get(feeder.id, feeder)
             feeder_id = feeder.id
         elif isinstance(feeder, str) and feeder:
             feeder_id = feeder
-            selected = self._feeders.get(feeder_id)
         else:
             msg = "A feeder object or non-empty ID is required"
             raise ValueError(msg)
+        selected = self._feeders.get(feeder_id)
+        if selected is None and self._feeders_loaded:
+            msg = "The feeder is no longer present in this account"
+            raise FeederControlUnavailableError(msg, action_completed=False)
         if selected is None or not selected.get("__typename"):
             await self.refresh()
             selected = self._feeders.get(feeder_id)
         if selected is None or not selected.is_owner:
             msg = "Device control requires an owner account"
             raise FeederControlUnavailableError(msg, action_completed=False)
-        self._feeders.setdefault(feeder_id, selected)
         return selected
 
     def _cache_control_result(
@@ -1501,83 +1536,152 @@ class BirdBuddy:
         )
         return {"powerProfile": selected.get("powerProfile")}
 
-    async def update_firmware_start(self, feeder: Feeder | str) -> FeederUpdateStatus:
-        """Start a firmware update.
+    async def _firmware_preflight(self, feeder_id: str) -> Feeder:
+        """Read fresh role, availability and immediate-start preconditions."""
+        data = await self._make_request(
+            query=queries.feeder.FIRMWARE_STATE, variables={"feederId": feeder_id}
+        )
+        account = data.get("me")
+        value = account.get("feeder") if isinstance(account, dict) else None
+        if (
+            not isinstance(value, dict)
+            or value.get("id") != feeder_id
+            or value.get("__typename") != "FeederForOwner"
+        ):
+            msg = "Firmware updates require a current owner role"
+            raise FeederControlUnavailableError(msg, action_completed=False)
+        current = self._feeders.setdefault(feeder_id, Feeder(value))
+        # A malformed/new response cannot reuse stale permission to start.
+        current.pop("firmwareUpdateAvailability", None)
+        current.update(value)
+        return current
 
-        Args:
-            feeder: The Feeder or its id to update.
+    def _cache_firmware_status(
+        self, feeder_id: str, data: object
+    ) -> FeederUpdateStatus:
+        """Retain server state without inventing a completion for unknown unions."""
+        if not isinstance(data, dict):
+            msg = "Malformed firmware response"
+            raise FirmwareUpdateUnknownStateError(msg)
+        status = FeederUpdateStatus(data)
+        if status.is_unknown:
+            msg = "Unknown firmware update state"
+            raise FirmwareUpdateUnknownStateError(msg, status=status)
+        partial = data.get("feeder")
+        if partial is not None:
+            if (
+                not isinstance(partial, dict)
+                or partial.get("id", feeder_id) != feeder_id
+            ):
+                msg = "Invalid firmware feeder state"
+                raise FirmwareUpdateUnknownStateError(msg)
+            self._feeders[feeder_id].update(partial)
+        return status
 
-        Returns:
-            The firmware update status.
+    async def update_firmware_start(
+        self,
+        feeder: Feeder | str,
+        *,
+        immediate: bool = False,
+        expected_version: str | None = None,
+        timeout: float = 30.0,
+    ) -> FeederUpdateStatus:
+        """Request firmware once after a fresh backend and owner preflight.
 
-        Raises:
-            NoFirmwareUpdateAvailableError: If the feeder already runs the
-                latest firmware (the API errors internally otherwise).
+        The default schedules an update when conditions permit (legacy start).
+        ``immediate=True`` uses RegularStart and requires fulfilled server
+        preconditions. Existing backend progress is returned for monitoring;
+        a concurrent local start is rejected. The total preflight/start budget
+        is bounded, and an uncertain mutation is never blindly repeated.
         """
-        current_status = await self.update_firmware_check(feeder)
+        if type(immediate) is not bool:
+            msg = "immediate must be a bool"
+            raise ValueError(msg)
+        if expected_version is not None and (
+            not isinstance(expected_version, str) or not expected_version
+        ):
+            msg = "expected_version must be a non-empty version string"
+            raise ValueError(msg)
+        return await self._with_control_timeout(
+            lambda _progress: self._start_firmware_operation(
+                feeder, immediate, expected_version
+            ),
+            timeout,
+        )
 
-        if current_status.is_in_progress:
-            # There's already an update in progress
-            return current_status
-
-        # The API returns an internal error when asked to start an update that
-        # is not available, so guard on the versions the check reported.
-        reported = Feeder(current_status.get("feeder") or {})
-        if reported.version and reported.version == reported.version_update_available:
-            msg = f"feeder already on the latest firmware ({reported.version})"
-            raise NoFirmwareUpdateAvailableError(msg)
-
-        feeder_id: str
-        if isinstance(feeder, Feeder):
-            if not feeder.is_owner:
-                LOGGER.warning("Firmware update is available only to owner accounts")
-                # The request will fail
-            feeder_id = feeder.id
-        else:
-            feeder_id = feeder
-        variables = {"feederId": feeder_id}
-        try:
-            data = await self._make_request(
-                query=queries.feeder.UPDATE_FIRMWARE,
-                variables=variables,
+    async def _start_firmware_operation(
+        self, feeder: Feeder | str, immediate: bool, expected_version: str | None
+    ) -> FeederUpdateStatus:
+        """Serialize attempts, then distinguish existing work from a new start."""
+        selected = await self._control_feeder(feeder)
+        lock = self._firmware_start_locks.setdefault(selected.id, asyncio.Lock())
+        if lock.locked():
+            msg = "A firmware start is already active"
+            raise FirmwareUpdateBusyError(msg, action_completed=False)
+        async with lock:
+            current = await self._firmware_preflight(selected.id)
+            status = await self.update_firmware_check(current)
+            if status.is_in_progress:
+                return status
+            if current.firmware_update_available is False:
+                msg = "No firmware update is available"
+                raise NoFirmwareUpdateAvailableError(msg)
+            if current.firmware_update_available is not True:
+                msg = "Firmware availability is unverified"
+                raise FirmwareUpdatePreconditionError(msg, action_completed=False)
+            if (
+                expected_version
+                and current.version_update_available != expected_version
+            ):
+                msg = "The requested firmware version is no longer available"
+                raise FirmwareUpdatePreconditionError(msg, action_completed=False)
+            if immediate and current.firmware_preconditions_fulfilled is not True:
+                msg = "Immediate firmware update preconditions are not fulfilled"
+                raise FirmwareUpdatePreconditionError(msg, action_completed=False)
+            operation = (
+                "feederFirmwareUpdateRegularStart"
+                if immediate
+                else "feederFirmwareUpdateStart"
             )
-        except GraphqlError as err:
-            if err.error_code == "FEEDER_FIRMWARE_UPGRADE_ALREADY_IN_PROGRESS":
-                # Should have been handled above.
-                return current_status
-            raise
-        LOGGER.debug("Firmware update request completed")
-        result = FeederUpdateStatus(data["feederFirmwareUpdateStart"])
-        if result.is_complete:
-            # After completion, update the Feeder state
-            self.feeders[feeder_id].update(result.get("feeder", {}))
-        return result
+            query = (
+                queries.feeder.UPDATE_FIRMWARE_REGULAR
+                if immediate
+                else queries.feeder.UPDATE_FIRMWARE
+            )
+            try:
+                data = await self._make_request(
+                    query=query, variables={"feederId": current.id}
+                )
+            except GraphqlError as err:
+                if err.error_code != "FEEDER_FIRMWARE_UPGRADE_ALREADY_IN_PROGRESS":
+                    raise
+                fresh = await self.update_firmware_check(current)
+                if fresh.is_in_progress:
+                    return fresh
+                msg = "Backend firmware start is unresolved; recheck before retrying"
+                raise FirmwareUpdateBusyError(msg) from err
+            return self._cache_firmware_status(current.id, data.get(operation))
 
-    async def update_firmware_check(self, feeder: Feeder | str) -> FeederUpdateStatus:
-        """Check on a firmware update.
+    async def update_firmware_check(
+        self, feeder: Feeder | str, *, timeout: float = 30.0
+    ) -> FeederUpdateStatus:
+        """Check backend progress with an owner guard and a bounded request."""
+        return await self._with_control_timeout(
+            lambda _progress: self._check_firmware_operation(feeder), timeout
+        )
 
-        Args:
-            feeder: The Feeder or its id to check.
-
-        Returns:
-            The current firmware update status.
-        """
-        if isinstance(feeder, Feeder):
-            if not feeder.is_owner:
-                LOGGER.warning("Firmware update is available only to owner accounts")
-                # The request will fail
-            feeder_id = feeder.id
-        else:
-            feeder_id = feeder
-        variables = {"feederId": feeder_id}
+    async def _check_firmware_operation(
+        self, feeder: Feeder | str
+    ) -> FeederUpdateStatus:
+        """Use the schema's progress-check mutation without starting firmware."""
+        selected = await self._control_feeder(feeder)
         data = await self._make_request(
             query=queries.feeder.UPDATE_FIRMWARE_PROGRESS,
-            variables=variables,
+            variables={"feederId": selected.id},
         )
-        result = FeederUpdateStatus(data["feederFirmwareUpdateCheckProgress"])
-        if result.is_complete:
-            self.feeders[feeder_id].update(result.get("feeder", {}))
-        return result
+        return self._cache_firmware_status(
+            selected.id, data.get("feederFirmwareUpdateCheckProgress")
+        )
 
     @property
     def collections(self) -> dict[str, Collection]:

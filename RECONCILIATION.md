@@ -116,6 +116,29 @@ alias. Off-grid changes use the bounded dedicated workflow; other options use
 `feederUpdate`. Mixed metadata and off-grid changes are sequential, so a later
 failure can leave earlier changes applied. Results report the observed state.
 
+## Firmware attempts and monitoring
+
+`update_firmware_start()` preserves the scheduling semantics of the original
+Start mutation. `immediate=True` explicitly uses RegularStart, after a fresh
+owner, availability and server-preconditions query. A supplied `expected_version`
+must still match the freshly reported available version before a new start.
+Existing backend progress is returned for monitoring; concurrent local starts
+are rejected. An already-updating response triggers a fresh progress check,
+never a second start request. Start and progress requests have bounded budgets.
+
+Firmware result models distinguish success, failure, progress and unknown
+variants. Missing or invalid numeric progress remains an indeterminate active
+update, and failure payloads may omit feeder details. Unknown-state errors can
+retain their result for diagnostics without logging raw payloads.
+
+Home Assistant Install requests an immediate update. Its owned monitor has a
+30-minute total limit and a budget of four consecutive transient errors. Every
+exit clears local busy state while retaining the last server status separately.
+Unload cancels and awaits the monitor, without claiming to cancel the backend
+firmware update. A later attempt always rechecks backend status and can attach
+to an update that continued after monitoring stopped. Validation uses mocked
+requests only; no firmware change was sent to a device.
+
 ## Packaging and checks
 
 Package metadata and dependencies live in `pyproject.toml`; the old

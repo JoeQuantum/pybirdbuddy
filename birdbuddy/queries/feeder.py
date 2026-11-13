@@ -223,20 +223,30 @@ fragment SingleOwnerFeederAdditionalFields on FeederForOwner {
 UPDATE_FIRMWARE = """
 mutation feederFirmwareUpdateStart($feederId: ID!) {
   feederFirmwareUpdateStart(feederId: $feederId) {
-    ... on FeederFirmwareUpdateFailedResult {
-      failedReason
-      __typename
-    }
+    __typename
+    ... on FeederFirmwareUpdateFailedResult { failedReason }
     ... on FeederFirmwareUpdateProgressResult {
       progress
-      __typename
+      feeder { id state firmwareVersion availableFirmwareVersion }
     }
     ... on FeederFirmwareUpdateSucceededResult {
-      __typename
-      feeder {
-        availableFirmwareVersion
-        firmwareVersion
-      }
+      feeder { id state firmwareVersion availableFirmwareVersion }
+    }
+  }
+}
+""".strip()
+
+UPDATE_FIRMWARE_REGULAR = """
+mutation feederFirmwareUpdateRegularStart($feederId: ID!) {
+  feederFirmwareUpdateRegularStart(feederId: $feederId) {
+    __typename
+    ... on FeederFirmwareUpdateFailedResult { failedReason }
+    ... on FeederFirmwareUpdateProgressResult {
+      progress
+      feeder { id state firmwareVersion availableFirmwareVersion }
+    }
+    ... on FeederFirmwareUpdateSucceededResult {
+      feeder { id state firmwareVersion availableFirmwareVersion }
     }
   }
 }
@@ -245,22 +255,47 @@ mutation feederFirmwareUpdateStart($feederId: ID!) {
 UPDATE_FIRMWARE_PROGRESS = """
 mutation feederFirmwareUpdateCheckProgress($feederId: ID!) {
   feederFirmwareUpdateCheckProgress(feederId: $feederId) {
-    ... on FeederFirmwareUpdateFailedResult {
-      failedReason
-      __typename
-    }
+    __typename
+    ... on FeederFirmwareUpdateFailedResult { failedReason }
     ... on FeederFirmwareUpdateProgressResult {
-      feeder {
-        state
-      }
       progress
-      __typename
+      feeder { id state firmwareVersion availableFirmwareVersion }
     }
     ... on FeederFirmwareUpdateSucceededResult {
+      feeder { id state firmwareVersion availableFirmwareVersion }
+    }
+  }
+}
+""".strip()
+
+FIRMWARE_STATE = """
+query firmwareState($feederId: ID!) {
+  me {
+    feeder(feederId: $feederId) {
       __typename
-      feeder {
-        availableFirmwareVersion
+      ... on FeederForOwner {
+        id
+        state
         firmwareVersion
+        availableFirmwareVersion
+        battery { charging percentage }
+        firmwareUpdateAvailability {
+          __typename
+          ... on FeederFirmwareUpdateNotAvailable { isAvailable }
+          ... on FeederFirmwareUpdateAvailable {
+            isAvailable
+            preconditionsFulfillment {
+              __typename
+              ... on FeederFirmwareUpdatePreconditionsFulfilled {
+                arePreconditionsFulfilled
+              }
+              ... on FeederFirmwareUpdatePreconditionsNotFulfilled {
+                arePreconditionsFulfilled
+                reason
+              }
+            }
+          }
+        }
       }
     }
   }

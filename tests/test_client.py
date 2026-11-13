@@ -520,6 +520,20 @@ async def test_update_firmware_start_guards_when_up_to_date(
     graphql_mock.side_effect = [
         {
             "data": {
+                "me": {
+                    "feeder": {
+                        "id": fid,
+                        "__typename": "FeederForOwner",
+                        "firmwareUpdateAvailability": {
+                            "__typename": "FeederFirmwareUpdateNotAvailable",
+                            "isAvailable": False,
+                        },
+                    }
+                }
+            }
+        },
+        {
+            "data": {
                 "feederFirmwareUpdateCheckProgress": {
                     "__typename": "FeederFirmwareUpdateSucceededResult",
                     "feeder": {
@@ -528,12 +542,12 @@ async def test_update_firmware_start_guards_when_up_to_date(
                     },
                 }
             }
-        }
+        },
     ]
     with pytest.raises(NoFirmwareUpdateAvailableError):
         await bbclient.update_firmware_start(fid)
-    # Only the check ran; the start mutation was never sent.
-    assert graphql_mock.call_count == 1
+    # Only preflight and progress checks ran; no firmware start was sent.
+    assert graphql_mock.call_count == 2
 
 
 _PID = "postcard-1"

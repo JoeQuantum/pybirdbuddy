@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import UserDict
 from enum import Enum
+from math import isfinite
 from typing import Any, Literal, TypedDict
 
 from birdbuddy import LOGGER
@@ -24,6 +25,25 @@ class FeederControlTimeoutError(FeederControlError):
 
 class FeederControlUnavailableError(FeederControlError):
     """The selected account role or explicit capability forbids a control."""
+
+
+class FirmwareUpdateBusyError(FeederControlError):
+    """A local firmware attempt or an unresolved backend start is already active."""
+
+
+class FirmwareUpdatePreconditionError(FeederControlError):
+    """An immediate firmware update lacks verified server preconditions."""
+
+
+class FirmwareUpdateUnknownStateError(FeederControlError):
+    """The backend firmware result is not a recognized state."""
+
+    def __init__(
+        self, reason: str, *, status: FeederUpdateStatus | None = None
+    ) -> None:
+        """Retain an unknown result for diagnostics without logging its payload."""
+        super().__init__(reason)
+        self.status = status
 
 
 class FeederMountingType(Enum):
@@ -298,6 +318,41 @@ class Feeder(UserDict[str, Any]):
         return self.get("availableFirmwareVersion", None)
 
     @property
+    def firmware_update_available(self) -> bool | None:
+        """Explicit server availability, or None when it is unverified."""
+        availability = self.get("firmwareUpdateAvailability")
+        if not isinstance(availability, dict):
+            return None
+        kind = availability.get("__typename")
+        if not isinstance(kind, str):
+            return None
+        expected = {
+            "FeederFirmwareUpdateAvailable": True,
+            "FeederFirmwareUpdateNotAvailable": False,
+        }.get(kind)
+        return expected if availability.get("isAvailable") is expected else None
+
+    @property
+    def firmware_preconditions_fulfilled(self) -> bool | None:
+        """Whether the latest selected server precondition check permits start."""
+        availability = self.get("firmwareUpdateAvailability")
+        check = (
+            availability.get("preconditionsFulfillment")
+            if isinstance(availability, dict)
+            else None
+        )
+        if not isinstance(check, dict):
+            return None
+        kind = check.get("__typename")
+        if not isinstance(kind, str):
+            return None
+        expected = {
+            "FeederFirmwareUpdatePreconditionsFulfilled": True,
+            "FeederFirmwareUpdatePreconditionsNotFulfilled": False,
+        }.get(kind)
+        return expected if check.get("arePreconditionsFulfilled") is expected else None
+
+    @property
     def device_version(self) -> FeederDeviceVersion:
         """Hardware generation from GraphQL ``version``, not firmware.
 
@@ -419,32 +474,43 @@ class FeederUpdateStatus(UserDict[str, Any]):
     @property
     def feeder(self) -> Feeder:
         """Returns a partial Feeder result."""
-        return Feeder(self["feeder"])
+        return Feeder(self.get("feeder") or {})
 
     @property
     def is_complete(self) -> bool:
         """`True` if the firmware update was successfully completed."""
-        return self["__typename"] == "FeederFirmwareUpdateSucceededResult"
+        return self.get("__typename") == "FeederFirmwareUpdateSucceededResult"
 
     @property
     def is_in_progress(self) -> bool:
         """`True` if the firmware update is in progress."""
-        return (
-            self["__typename"] == "FeederFirmwareUpdateProgressResult"
-            and self.get("progress", None) is not None
-        )
+        return self.get("__typename") == "FeederFirmwareUpdateProgressResult"
 
     @property
     def is_failed(self) -> bool:
         """`True` if the firmware update has failed."""
-        return self["__typename"] == "FeederFirmwareUpdateFailedResult"
+        return self.get("__typename") == "FeederFirmwareUpdateFailedResult"
+
+    @property
+    def is_unknown(self) -> bool:
+        """Unknown or malformed variants cannot be treated as success or idle."""
+        return not (self.is_complete or self.is_in_progress or self.is_failed)
 
     @property
     def failure_reason(self) -> str | None:
         """Failure reason, or `None` if no failure."""
-        return self.get("failedReason", None)
+        reason = self.get("failedReason")
+        return reason if reason in ("BATTERY_LOW", "OFFLINE", "UNKNOWN") else None
 
     @property
-    def progress(self) -> int | None:
+    def progress(self) -> float | None:
         """Current firmware installation progress."""
-        return self.get("progress", None)
+        value = self.get("progress")
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not isfinite(value)
+            or not 0 <= value <= 100
+        ):
+            return None
+        return float(value)
