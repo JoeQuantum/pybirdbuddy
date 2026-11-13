@@ -25,7 +25,14 @@ from birdbuddy.exceptions import (
     SocialAuthenticationRequiredError,
     UnexpectedResponseError,
 )
-from birdbuddy.feed import Feed, FeedNode, FeedNodeType
+from birdbuddy.feed import (
+    Feed,
+    FeedBatch,
+    FeedCheckpoint,
+    FeedNode,
+    FeedNodeType,
+    PaginationError,
+)
 from birdbuddy.feeder import Feeder, FeederUpdateStatus, PowerProfile
 from birdbuddy.media import Collection, Media
 from birdbuddy.postcards import CollectedPostcard, PostcardAnalysis
@@ -64,7 +71,7 @@ def _require_page_size(page_size: int) -> None:
     Raises:
         ValueError: If ``page_size`` is not between 1 and the API's limit.
     """
-    if not 1 <= page_size <= _MAX_PAGE_SIZE:
+    if type(page_size) is not int or not 1 <= page_size <= _MAX_PAGE_SIZE:
         msg = f"page size must be between 1 and {_MAX_PAGE_SIZE}"
         raise ValueError(msg)
 
@@ -109,6 +116,9 @@ class BirdBuddy:
         self._auth_failure: AuthenticationFailedError | None = None
         self._me = None
         self._last_feed_date = None
+        self._feed_checkpoint = FeedCheckpoint()
+        self._pending_feed_batch: FeedBatch | None = None
+        self._feed_lock = asyncio.Lock()
         self._feeders = {}
         self._collections = {}
         self.language_code = "en"
@@ -340,62 +350,51 @@ class BirdBuddy:
         query: str,
         variables: dict[str, Any],
         connection: Callable[[dict], dict],
+        *,
+        max_pages: int = 100,
     ) -> AsyncIterator[dict]:
-        """Yield successive pages of a Relay connection, following the cursor.
+        """Yield validated forward pages or fail explicitly on incomplete reads.
 
-        Requests ``query`` repeatedly, advancing ``after`` by the previous
-        page's ``endCursor`` until ``hasNextPage`` is false. Terminates
-        defensively if the server reports another page but returns no usable
-        cursor (missing, null, or one already seen), rather than looping
-        forever on a stuck cursor.
-
-        Args:
-            query: The GraphQL query text; it must accept an ``after`` cursor
-                and select ``pageInfo { hasNextPage endCursor }``.
-            variables: Base variables sent with every page (e.g. ``first``);
-                ``after`` is injected per page.
-            connection: Extracts the connection object (the one carrying
-                ``edges`` and ``pageInfo``) from a response ``data`` dict.
-
-        Yields:
-            Each page's connection object, in natural iterating order.
-
-        Raises:
-            UnexpectedResponseError: If a response lacks the expected
-                connection object.
+        Cursor repetition, malformed page metadata and exhaustion of the page
+        budget raise PaginationError. Consumers must not commit partial output.
         """
-        after: str | None = None
-        seen: set[str] = set()
-        while True:
-            page_vars = dict(variables)
+        if type(max_pages) is not int or max_pages < 1:
+            message = "max_pages must be a positive integer"
+            raise ValueError(message)
+        after = variables.get("after")
+        seen = {after} if after is not None else set()
+        for _ in range(max_pages):
+            page_vars = {
+                key: value for key, value in variables.items() if key != "after"
+            }
             if after is not None:
-                # The API errors on an explicit ``after: null``; omit it for
-                # the first page and only send a real cursor.
                 page_vars["after"] = after
             data = await self._make_request(query=query, variables=page_vars)
             try:
                 page = connection(data)
             except (KeyError, TypeError) as err:
-                raise UnexpectedResponseError(data) from err
+                message = "Missing pagination connection"
+                raise PaginationError(message) from err
             if not isinstance(page, dict):
-                raise UnexpectedResponseError(data)
+                message = "Malformed pagination connection"
+                raise PaginationError(message)
+            info = page.get("pageInfo")
+            if not isinstance(info, dict) or type(info.get("hasNextPage")) is not bool:
+                message = "Missing pagination completeness metadata"
+                raise PaginationError(message)
+            cursor = info.get("endCursor")
+            if info["hasNextPage"] and (
+                not isinstance(cursor, str) or not cursor or cursor in seen
+            ):
+                message = "Pagination cursor is missing or repeated"
+                raise PaginationError(message)
             yield page
-
-            page_info = page.get("pageInfo") or {}
-            if not page_info.get("hasNextPage"):
-                return
-            cursor = page_info.get("endCursor")
-            if not cursor or cursor in seen:
-                # Defensive: the server claims another page but gave no new
-                # cursor to advance with. Stop instead of re-requesting.
-                LOGGER.debug(
-                    "Pagination stopped: hasNextPage but cursor did not "
-                    "advance (endCursor=%r)",
-                    cursor,
-                )
+            if not info["hasNextPage"]:
                 return
             seen.add(cursor)
             after = cursor
+        message = "Pagination page limit exceeded"
+        raise PaginationError(message)
 
     @property
     def user(self) -> BirdBuddyUser | None:
@@ -522,139 +521,182 @@ class BirdBuddy:
         self,
         first: int = 20,
         after: str | None = None,
-        last: int | None = None,  # noqa: ARG002
+        last: int | None = None,
         before: str | None = None,
     ) -> Feed:
-        """Return the Bird Buddy Feed.
+        """Read one forward page; reject unsupported backward arguments.
 
-        The result contains a ``"pageInfo"`` key for pagination/cursor data
-        and an ``"edges"`` key with FeedEdge nodes, newest first.
-
-        Args:
-            first: Return the first N items older than ``after``. Must be
-                1-100; the API returns an internal error for larger values.
-            after: Cursor of the oldest item previously seen (pagination).
-            last: Return the last N items newer than ``before``. Currently
-                ignored; the backward-pagination request path is disabled.
-            before: Cursor of the newest item previously seen. Currently
-                ignored (see ``last``).
-
-        Returns:
-            The Feed.
-
-        Raises:
-            ValueError: If ``first`` is not between 1 and 100.
+        ``first`` is 1-100. The default initial window is explicitly 20 items.
+        ``last`` and ``before`` are unsupported, rather than silently ignored.
         """
         _require_page_size(first)
-        variables: dict[str, Any] = {
-            # $first: Int,
-            # $after: String,
-            # $last: Int,
-            # $before: String,
-            "first": first,
-        }
-
-        if after:
-            # $after actually looks for _older_ items
+        if last is not None or before is not None:
+            message = "Backward feed pagination is unsupported"
+            raise ValueError(message)
+        variables: dict[str, Any] = {"first": first}
+        if after is not None:
             variables["after"] = after
-
-        if before:
-            # Not implemented server-side (GraphqlError 501).
-            #  variables["before"] = before
-            #  variables["last"] = last if last else 20
-            pass
-
         data = await self._make_request(query=queries.me.FEED, variables=variables)
-        return Feed(data["me"]["feed"])
+        try:
+            page = data["me"]["feed"]
+        except (KeyError, TypeError) as err:
+            message = "Missing feed connection"
+            raise PaginationError(message) from err
+        if not isinstance(page, dict):
+            message = "Malformed feed connection"
+            raise PaginationError(message)
+        return Feed(page)
 
-    def _feed_pages(self) -> AsyncIterator[dict]:
-        """Iterate feed connection pages, newest first, one per request."""
+    def _feed_pages(self, *, max_pages: int = 100) -> AsyncIterator[dict]:
+        """Iterate feed connection pages, newest first, with a finite budget."""
         return self._iter_pages(
             query=queries.me.FEED,
             variables={"first": _MAX_PAGE_SIZE},
             connection=lambda data: data["me"]["feed"],
+            max_pages=max_pages,
         )
 
-    def _note_newest_feed_date(self, feed: Feed) -> None:
-        """Advance the saved last-seen timestamp to a page's newest item.
+    def export_feed_checkpoint(self) -> dict[str, Any]:
+        """Export accepted state only; a pending batch never advances it."""
+        return self._feed_checkpoint.to_dict()
 
-        Args:
-            feed: A feed page; its newest edge sets the last-seen timestamp.
+    def import_feed_checkpoint(self, state: dict[str, Any]) -> None:
+        """Restore persisted state before polling; reject active intake changes."""
+        if self._pending_feed_batch is not None or self._feed_lock.locked():
+            message = "Cannot replace a checkpoint during pending feed intake"
+            raise ValueError(message)
+        checkpoint = FeedCheckpoint.from_dict(state)
+        self._feed_checkpoint = checkpoint
+        self._last_feed_date = checkpoint.watermark
+
+    def ack_feed_batch(self, batch_id: str) -> dict[str, Any]:
+        """Accept a batch only after the caller has durably persisted intake.
+
+        Persist the batch's proposed checkpoint together with its work queue,
+        then acknowledge. A restart can restore that atomically stored state.
+        No durable storage or automatic acknowledgement is provided here.
         """
-        if not (newest_edge := feed.newest_edge):
-            return
-        newest_date = newest_edge.node.created_at
-        if newest_date is not None and newest_date != self._last_feed_date:
-            LOGGER.debug(
-                "Updating latest seen Feed timestamp: %s -> %s",
-                self._last_feed_date,
-                newest_date,
+        batch = self._pending_feed_batch
+        if batch is None or batch.batch_id != batch_id:
+            message = "No pending feed batch matches this acknowledgement"
+            raise ValueError(message)
+        self._feed_checkpoint = batch.checkpoint
+        self._last_feed_date = batch.checkpoint.watermark
+        self._pending_feed_batch = None
+        return self.export_feed_checkpoint()
+
+    async def _read_feed_intake(
+        self,
+        cutoff: datetime | None,
+        *,
+        backfill: bool,
+        initial_limit: int,
+        max_pages: int,
+    ) -> list[FeedNode]:
+        """Finish the requested traversal before proposing any checkpoint."""
+        if cutoff is None and not backfill:
+            return (await self.feed(first=initial_limit)).validated_nodes()
+        nodes: dict[str, FeedNode] = {}
+        async for page in self._feed_pages(max_pages=max_pages):
+            page_nodes = Feed(page).validated_nodes()
+            for node in page_nodes:
+                created = node.created_at
+                if cutoff is None or created is None or created >= cutoff:
+                    nodes.setdefault(node.node_id, node)
+            dates = [node.created_at for node in page_nodes if node.created_at]
+            # Equal timestamps can span pages: stop only at a strictly older
+            # item. Null/unknown timestamps never terminate traversal.
+            if cutoff is not None and dates and min(dates) < cutoff:
+                break
+        return list(nodes.values())
+
+    async def retrieve_feed_batch(
+        self,
+        *,
+        since: datetime | str | None = _NO_VALUE,  # type: ignore[assignment]
+        backfill: bool = False,
+        initial_limit: int = 20,
+        max_pages: int = 100,
+    ) -> FeedBatch:
+        """Retrieve replayable intake without accepting its proposed watermark.
+
+        Calls replay the pending batch until explicit acknowledgement, even if
+        different arguments are supplied. First use reads the latest 20 items
+        unless ``backfill=True``. Later calls scan a five-minute overlap and
+        deduplicate accepted IDs. Late arrivals older than that window require
+        explicit backfill. ``since`` is an inclusive explicit lower bound;
+        ``backfill=True`` with the default since scans all history.
+
+        Incomplete pagination and capacity limits fail without changing either
+        accepted state or pending intake. Consumers must persist nodes and
+        ``batch.checkpoint.to_dict()`` atomically before ack_feed_batch().
+        """
+        _require_page_size(initial_limit)
+        if type(max_pages) is not int or max_pages < 1:
+            message = "max_pages must be a positive integer"
+            raise ValueError(message)
+        async with self._feed_lock:
+            if self._pending_feed_batch is not None:
+                return self._pending_feed_batch
+            cutoff = None if backfill else self._feed_checkpoint.cutoff
+            if since is not _NO_VALUE:
+                cutoff = (
+                    FeedNode.parse_datetime(since) if isinstance(since, str) else since
+                )
+                if cutoff is not None and (
+                    not isinstance(cutoff, datetime) or cutoff.tzinfo is None
+                ):
+                    message = "since must be a timezone-aware datetime"
+                    raise ValueError(message)
+                if isinstance(since, str) and cutoff is None:
+                    message = "since must contain a valid timestamp"
+                    raise ValueError(message)
+            nodes = await self._read_feed_intake(
+                cutoff,
+                backfill=backfill,
+                initial_limit=initial_limit,
+                max_pages=max_pages,
             )
-            self._last_feed_date = newest_date
+            seen = dict(self._feed_checkpoint.seen)
+            unique: dict[str, FeedNode] = {}
+            for node in nodes:
+                if node.node_id not in seen:
+                    unique.setdefault(node.node_id, node)
+            new_nodes = list(unique.values())
+            checkpoint = self._feed_checkpoint.advance(new_nodes)
+            batch = FeedBatch.create(new_nodes, checkpoint)
+            self._pending_feed_batch = batch
+            return batch
 
     async def refresh_feed(
         self,
-        since: datetime | str = _NO_VALUE,  # type: ignore[assignment]
+        since: datetime | str | None = _NO_VALUE,  # type: ignore[assignment]
     ) -> list[FeedNode]:
-        """Return only feed items new since the last refresh.
+        """Compatibility list wrapper; it never auto-acknowledges intake.
 
-        Pages backward through the feed (newest first) until it reaches
-        items no newer than ``since``, so more than one page of new items is
-        returned rather than truncated at the first page. The newest item's
-        timestamp is saved as the last-seen feed item, the new default for
-        ``since``.
-
-        With no ``since`` and no prior refresh there is no lower bound to
-        page toward, so only the most recent page is returned; this avoids
-        replaying the entire history on a first refresh.
-
-        Args:
-            since: The time after which to restrict new feed items; defaults
-                to the last-seen timestamp.
-
-        Returns:
-            The new feed nodes, newest first.
+        Use retrieve_feed_batch() and ack_feed_batch() for ongoing polling.
+        Explicit ``since`` retains this legacy wrapper's strict comparison;
+        the batch interface includes equal timestamps for lossless boundaries.
         """
-        resolved = self._last_feed_date if since is _NO_VALUE else since
-        if isinstance(resolved, str):
-            resolved = FeedNode.parse_datetime(resolved)
+        batch = await self.retrieve_feed_batch(since=since)
+        nodes = list(batch.nodes)
+        if since is _NO_VALUE or since is None:
+            return nodes
+        cutoff = FeedNode.parse_datetime(since) if isinstance(since, str) else since
+        if cutoff is None:
+            return nodes
+        return [node for node in nodes if node.created_at and node.created_at > cutoff]
 
-        if resolved is None:
-            feed = await self.feed()
-            self._note_newest_feed_date(feed)
-            return feed.filter(newer_than=None)
-
-        new_nodes: list[FeedNode] = []
-        noted = False
-        async for page in self._feed_pages():
-            feed = Feed(page)
-            if not noted:
-                self._note_newest_feed_date(feed)
-                noted = True
-            new_nodes.extend(feed.filter(newer_than=resolved))
-            oldest = min(
-                (n.created_at for n in feed.nodes if n.created_at),
-                default=None,
-            )
-            if oldest is not None and oldest <= resolved:
-                # Reached items no newer than the cutoff; older pages hold
-                # nothing new.
-                break
-        return new_nodes
-
-    async def feed_nodes(self, node_type: FeedNodeType) -> list[FeedNode]:
-        """Return all feed items of the given type across every page.
-
-        Args:
-            node_type: The feed node type to filter by.
-
-        Returns:
-            The matching feed nodes, newest first.
-        """
-        nodes: list[FeedNode] = []
-        async for page in self._feed_pages():
-            nodes.extend(Feed(page).filter(of_type=node_type))
-        return nodes
+    async def feed_nodes(
+        self, node_type: FeedNodeType, *, max_pages: int = 100
+    ) -> list[FeedNode]:
+        """Read matching nodes across all pages, deduplicating overlapping IDs."""
+        nodes: dict[str, FeedNode] = {}
+        async for page in self._feed_pages(max_pages=max_pages):
+            for node in Feed(page).validated_nodes():
+                if node.node_type is node_type:
+                    nodes.setdefault(node.node_id, node)
+        return list(nodes.values())
 
     async def new_postcards(self) -> list[FeedNode]:
         """Return all new 'Postcard' feed items.
@@ -1306,7 +1348,7 @@ class BirdBuddy:
         return self._collections
 
     async def collection(
-        self, collection_id: str, page_size: int = 50
+        self, collection_id: str, page_size: int = 50, *, max_pages: int = 100
     ) -> dict[str, Media]:
         """Return all media in the specified collection.
 
@@ -1315,6 +1357,7 @@ class BirdBuddy:
 
         Args:
             collection_id: The collection ``UUID``.
+            max_pages: Maximum page requests before incomplete traversal fails.
             page_size: How many media to request per page. Must be 1-100; the
                 API returns an internal error for larger page sizes.
 
@@ -1332,6 +1375,7 @@ class BirdBuddy:
             query=queries.me.COLLECTIONS_MEDIA,
             variables=variables,
             connection=lambda data: data["collection"]["media"],
+            max_pages=max_pages,
         )
         async for media in pages:
             try:

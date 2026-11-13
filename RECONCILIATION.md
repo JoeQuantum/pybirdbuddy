@@ -57,6 +57,34 @@ URLs become nonfunctional examples and dates become fixed synthetic timestamps.
 Review captures before turning them into fixtures. `--raw-output PATH` explicitly
 creates a separate private file with mode 0600 and refuses existing files.
 
+## Feed intake and checkpoints
+
+`retrieve_feed_batch()` returns a `FeedBatch` without advancing accepted state.
+Persist `batch.nodes` and `batch.checkpoint.to_dict()` in the same durable
+transaction, then call `ack_feed_batch(batch.batch_id)`. Pending batches replay
+without another request, and node copies protect the pending payload from caller
+edits. Restore the saved checkpoint with `import_feed_checkpoint()` before the
+next poll. `export_feed_checkpoint()` always exports accepted state only.
+
+The first scan deliberately reads the latest 20 items; use `initial_limit` to
+change that window or `backfill=True` to traverse history. Subsequent scans use
+a five-minute overlap and ID deduplication. Equal-timestamp boundaries continue
+across pages; null or malformed timestamps retain their IDs without ending a
+scan. Arrivals older than the overlap require deliberate backfill.
+Checkpoints retain at most 10,000 IDs; exhaustion raises instead of dropping
+records.
+
+Versioned checkpoint imports reject malformed or unknown formats. Repeated or
+missing pagination cursors, malformed completion metadata and the default
+100-page budget raise `PaginationError`, leaving accepted state unchanged.
+Collection pagination uses the same incomplete-traversal checks. Unsupported
+backward feed arguments now raise instead of being silently ignored.
+
+The legacy `refresh_feed()` list wrapper no longer automatically advances a
+timestamp. Ongoing consumers must migrate to retrieval plus explicit
+acknowledgement; otherwise they keep receiving the pending batch. Its explicit
+`since` comparison remains strict; the batch interface uses an inclusive bound.
+
 ## Packaging and checks
 
 Package metadata and dependencies live in `pyproject.toml`; the old

@@ -7,6 +7,7 @@ import pytest
 
 from birdbuddy.client import BirdBuddy
 from birdbuddy.exceptions import NoFirmwareUpdateAvailableError, UnexpectedResponseError
+from birdbuddy.feed import PaginationError
 from birdbuddy.feeder import Feeder, PowerProfile
 from birdbuddy.postcards import CollectedPostcard, PostcardAnalysis
 from birdbuddy.sightings import PostcardSighting, SightingFinishStrategy
@@ -289,7 +290,7 @@ async def test_collection_rejects_bad_page_size(
 async def test_collection_stops_on_null_cursor(
     bbclient: BirdBuddy, graphql_mock: AsyncMock
 ):
-    """hasNextPage=True with a null endCursor terminates instead of looping.
+    """hasNextPage=True with a null endCursor fails instead of truncating.
 
     Only one page is queued; if the cursor guard failed, the loop would
     re-request and exhaust side_effect (StopIteration) rather than hang.
@@ -297,9 +298,8 @@ async def test_collection_stops_on_null_cursor(
     graphql_mock.side_effect = [
         _collection_page("m1", has_next=True, cursor=None),
     ]
-    result = await bbclient.collection("col-1")
-
-    assert set(result) == {"m1"}
+    with pytest.raises(PaginationError, match="cursor"):
+        await bbclient.collection("col-1")
     assert graphql_mock.call_count == 1
 
 
@@ -307,14 +307,13 @@ async def test_collection_stops_on_null_cursor(
 async def test_collection_stops_on_repeated_cursor(
     bbclient: BirdBuddy, graphql_mock: AsyncMock
 ):
-    """A non-advancing (repeated) endCursor stops the loop after that page."""
+    """A repeated endCursor raises rather than returning a partial collection."""
     graphql_mock.side_effect = [
         _collection_page("m1", has_next=True, cursor="c1"),
         _collection_page("m2", has_next=True, cursor="c1"),
     ]
-    result = await bbclient.collection("col-1")
-
-    assert set(result) == {"m1", "m2"}
+    with pytest.raises(PaginationError, match="cursor"):
+        await bbclient.collection("col-1")
     assert graphql_mock.call_count == 2
 
 
