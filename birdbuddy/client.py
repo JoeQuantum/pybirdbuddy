@@ -137,6 +137,8 @@ class BirdBuddy:
         self.graphql = BirdBuddyGraphqlClient(BB_URL)
         self._auth_lock = asyncio.Lock()
         self._auth_failure: AuthenticationFailedError | None = None
+        self._bound_account_id: str | None = None
+        self._bound_account_verified = False
         self._me = None
         self._last_feed_date = None
         self._feed_checkpoint = FeedCheckpoint()
@@ -156,8 +158,48 @@ class BirdBuddy:
         self._collections_error: tuple[str | None, str, Exception] | None = None
         self.language_code = "en"
 
+    def bind_account(self, account_id: str) -> None:
+        """Bind this client permanently to one verified account identity.
+
+        Consumers with persistent account entries should bind their stored ID
+        before refresh. A legacy entry may bind after independently verifying
+        its existing profile. Reauthentication requires a new client instance;
+        repeating the same binding never clears a sticky authentication error.
+        """
+        if (
+            not isinstance(account_id, str)
+            or not account_id
+            or account_id != account_id.strip()
+        ):
+            msg = "Account ID must be a nonempty string without surrounding whitespace"
+            raise ValueError(msg)
+        if self._bound_account_id not in (None, account_id) or (
+            self._me is not None and self._me.id != account_id
+        ):
+            self._reject_account_identity()
+        self._bound_account_id = account_id
+        if self._me is not None:
+            self._bound_account_verified = True
+
+    def _reject_account_identity(self) -> None:
+        """Latch a safe identity failure, including failures outside auth refresh."""
+        failure = AuthenticationFailedError(
+            "Bird Buddy authentication does not match the bound account"
+        )
+        self._auth_failure = failure
+        raise failure
+
+    def _verify_bound_profile(self, profile: object) -> None:
+        """Require explicit matching identity before accepting a bound response."""
+        if self._bound_account_id is None:
+            return
+        user = profile.get("user") if isinstance(profile, dict) else None
+        if not isinstance(user, dict) or user.get("id") != self._bound_account_id:
+            self._reject_account_identity()
+
     def _save_me(self, me_data: dict) -> bool:
         """Reconcile an authoritative account snapshot without stale role fields."""
+        self._verify_bound_profile(me_data)
         if not me_data:
             return False
         user, feeders = self._validate_account_snapshot(me_data)
@@ -173,6 +215,7 @@ class BirdBuddy:
                 self._feeders[feeder_id] = Feeder(data)
         self._me = BirdBuddyUser(user)
         self._feeders_loaded = True
+        self._bound_account_verified = self._bound_account_id is not None
         return True
 
     @staticmethod
@@ -213,6 +256,7 @@ class BirdBuddy:
         self._access_token = None
         self._refresh_token = None
         self._me = None
+        self._bound_account_verified = False
 
     async def dump_schema(self) -> dict:
         """For debugging purposes: dump the entire GraphQL schema."""
@@ -223,12 +267,20 @@ class BirdBuddy:
         async with self._auth_lock:
             if self._auth_failure is not None:
                 raise self._auth_failure
-            if expired_token is not None and self._access_token == expired_token:
-                self._access_token = None
+            token_expired = (
+                expired_token is not None and self._access_token == expired_token
+            )
             try:
                 if self._needs_login():
                     return await self._login()
-                if self._needs_refresh():
+                if (
+                    token_expired
+                    or self._needs_refresh()
+                    or (
+                        self._bound_account_id is not None
+                        and not self._bound_account_verified
+                    )
+                ):
                     await self._refresh_access_token()
             except AuthenticationFailedError as err:
                 # Persistent rejection must not make every queued request log in.
@@ -271,8 +323,10 @@ class BirdBuddy:
         if kind not in (None, "Auth"):
             raise UnexpectedResponseError
         profile = result.get("me")
+        self._verify_bound_profile(profile)
         if not isinstance(profile, dict) or not isinstance(profile.get("user"), dict):
             raise UnexpectedResponseError
+        self._validate_account_snapshot(profile)
         self._save_tokens(result)
         return self._save_me(profile)
 
@@ -289,7 +343,9 @@ class BirdBuddy:
         tokens = data.get("authRefreshToken")
         if not isinstance(tokens, dict):
             raise UnexpectedResponseError
+        self._verify_bound_profile(tokens.get("me"))
         self._save_tokens(tokens)
+        self._bound_account_verified = self._bound_account_id is not None
         LOGGER.debug("Access token refreshed")
         return True
 

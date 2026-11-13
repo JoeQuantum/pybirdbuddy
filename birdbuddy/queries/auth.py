@@ -190,6 +190,11 @@ REFRESH_AUTH_TOKEN = """
 mutation authRefreshToken($refreshTokenInput: RefreshTokenInput!) {
   authRefreshToken(refreshTokenInput: $refreshTokenInput) {
     ...AuthFields
+    me {
+      user {
+        id
+      }
+    }
     __typename
   }
 }
