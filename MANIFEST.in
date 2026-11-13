@@ -5,3 +5,4 @@ include .markdownlint.yaml
 include .env.example
 recursive-include tests *.py *.json
 recursive-include scripts *.py
+recursive-include docs *.md

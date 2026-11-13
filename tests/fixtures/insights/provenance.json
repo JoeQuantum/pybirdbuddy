@@ -1,0 +1,6 @@
+{
+  "source": "Synthetic examples constructed from the publicly introspected schema dated 2026-11-13. No account payload capture or live feature validation.",
+  "null_cases": "Stopped named bird has deliberately null non-null stats to test malformed/partial payload tolerance. Daily/monthly lists are abbreviated test data.",
+  "identities": "All IDs, names and example.invalid media addresses are invented test fixtures.",
+  "schema": "../schema.json"
+}
