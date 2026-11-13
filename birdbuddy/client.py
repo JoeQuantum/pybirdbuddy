@@ -6,21 +6,23 @@ import asyncio
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime
 import json
+import re
 from typing import Any
 
 import aiohttp
 import langcodes
-from python_graphql_client import GraphqlClient
 from typing_extensions import deprecated
 
-from birdbuddy import LOGGER, VERBOSE, queries
+from birdbuddy import LOGGER, queries
 from birdbuddy.const import BB_URL
 from birdbuddy.exceptions import (
+    AUTH_TOKEN_EXPIRED_ERROR,
     AuthenticationFailedError,
-    AuthTokenExpiredError,
     GraphqlError,
+    MutationOutcomeUnknownError,
     NoFirmwareUpdateAvailableError,
     NoResponseError,
+    SocialAuthenticationRequiredError,
     UnexpectedResponseError,
 )
 from birdbuddy.feed import Feed, FeedNode, FeedNodeType
@@ -36,6 +38,7 @@ from birdbuddy.sightings import (
     SightingFinishStrategy,
     SightingReport,
 )
+from birdbuddy.transport import BirdBuddyGraphqlClient, HttpResponseError
 from birdbuddy.user import BirdBuddyUser
 
 _NO_VALUE = object()
@@ -46,9 +49,10 @@ _MAX_PAGE_SIZE = 100
 side (HTTP 200 with a GraphQL ``INTERNAL_SERVER_ERROR``)."""
 
 
-def _redact(data: object, redacted: bool = True) -> object:
-    """Return a redacted string if necessary."""
-    return "**REDACTED**" if redacted else data
+def _is_read(query: str) -> bool:
+    """Only ordinary query documents qualify for transient transport retries."""
+    document = re.sub(r"#[^\n]*", "", query).lstrip()
+    return document.startswith("{") or bool(re.match(r"query\b", document))
 
 
 def _require_page_size(page_size: int) -> None:
@@ -68,7 +72,7 @@ def _require_page_size(page_size: int) -> None:
 class BirdBuddy:
     """Bird Buddy api client."""
 
-    graphql: GraphqlClient
+    graphql: BirdBuddyGraphqlClient
     _email: str | None
     _password: str | None
     _access_token: str | None
@@ -100,7 +104,9 @@ class BirdBuddy:
         self._refresh_token = refresh_token
         self._access_token = access_token
 
-        self.graphql = GraphqlClient(BB_URL)
+        self.graphql = BirdBuddyGraphqlClient(BB_URL)
+        self._auth_lock = asyncio.Lock()
+        self._auth_failure: AuthenticationFailedError | None = None
         self._me = None
         self._last_feed_date = None
         self._feeders = {}
@@ -142,83 +148,124 @@ class BirdBuddy:
         """For debugging purposes: dump the entire GraphQL schema."""
         return await self._make_request(query=DUMP_SCHEMA, auth=False)
 
-    async def _check_auth(self) -> bool:
-        if self._needs_login():
-            LOGGER.debug("Login required")
-            return await self._login()
-        if self._needs_refresh():
-            LOGGER.debug("Access token needs to be refreshed")
-            await self._refresh_access_token()
-        return not self._needs_login()
+    async def _check_auth(self, expired_token: str | None = None) -> bool:
+        """Serialize token changes and reuse a refresh completed by another task."""
+        async with self._auth_lock:
+            if self._auth_failure is not None:
+                raise self._auth_failure
+            if expired_token is not None and self._access_token == expired_token:
+                self._access_token = None
+            try:
+                if self._needs_login():
+                    return await self._login()
+                if self._needs_refresh():
+                    await self._refresh_access_token()
+            except AuthenticationFailedError as err:
+                # Persistent rejection must not make every queued request log in.
+                self._auth_failure = err
+                raise
+            return self._access_token is not None
+
+    def _save_tokens(self, result: dict) -> None:
+        """Replace a token pair only after validating both values."""
+        access = result.get("accessToken")
+        refresh = result.get("refreshToken")
+        if not isinstance(access, str) or not access:
+            raise UnexpectedResponseError
+        if not isinstance(refresh, str) or not refresh:
+            raise UnexpectedResponseError
+        self._access_token = access
+        self._refresh_token = refresh
 
     async def _login(self) -> bool:
-        """Sign in with email/password and store the tokens.
-
-        Returns:
-            ``True`` if the user profile was saved.
-
-        Raises:
-            AuthenticationFailedError: If credentials are missing or the
-                sign-in request fails.
-        """
+        """Handle every current email sign-in union without leaking credentials."""
         if not (self._email and self._password):
-            msg = "email and password are required to sign in"
+            msg = "Email and password are required to sign in"
             raise AuthenticationFailedError(msg)
-        variables = {
-            "emailSignInInput": {
-                "email": self._email,
-                "password": self._password,
-            }
-        }
-        try:
-            data = await self._make_request(
-                query=queries.auth.SIGN_IN,
-                variables=variables,
-                auth=False,
-            )
-        except GraphqlError as err:
-            LOGGER.exception("Error logging in: %s", err)
-            raise AuthenticationFailedError(err) from err
-
-        result = data["authEmailSignIn"]
-        self._access_token = result["accessToken"]
-        self._refresh_token = result["refreshToken"]
-        return self._save_me(result["me"])
+        data = await self._make_request(
+            query=queries.auth.SIGN_IN,
+            variables={
+                "emailSignInInput": {"email": self._email, "password": self._password}
+            },
+            auth=False,
+        )
+        result = data.get("authEmailSignIn")
+        if not isinstance(result, dict):
+            raise UnexpectedResponseError
+        kind = result.get("__typename")
+        if kind == "AuthUseSocialProblem":
+            raise SocialAuthenticationRequiredError(result.get("socialProviders") or [])
+        if kind == "Problem":
+            msg = "Bird Buddy rejected the email sign-in details"
+            raise AuthenticationFailedError(msg)
+        if kind not in (None, "Auth"):
+            raise UnexpectedResponseError
+        profile = result.get("me")
+        if not isinstance(profile, dict) or not isinstance(profile.get("user"), dict):
+            raise UnexpectedResponseError
+        self._save_tokens(result)
+        return self._save_me(profile)
 
     async def _refresh_access_token(self) -> bool:
-        """Exchange the refresh token for a new access token.
-
-        Returns:
-            ``True`` once a new access token is set.
-
-        Raises:
-            AuthenticationFailedError: If no refresh token is set or the
-                refresh request fails.
-        """
+        """Refresh once; transient failures preserve the last known token pair."""
         if not self._refresh_token:
-            msg = "a refresh token is required to refresh the access token"
+            msg = "A refresh token is required"
             raise AuthenticationFailedError(msg)
-        variables = {
-            "refreshTokenInput": {
-                "token": self._refresh_token,
-            }
-        }
-        try:
-            data = await self._make_request(
-                query=queries.auth.REFRESH_AUTH_TOKEN,
-                variables=variables,
-                auth=False,
-            )
-        except GraphqlError as exc:
-            LOGGER.exception("Error refreshing access token: %s", exc)
-            self._refresh_token = None
-            raise AuthenticationFailedError(exc) from exc
+        data = await self._make_request(
+            query=queries.auth.REFRESH_AUTH_TOKEN,
+            variables={"refreshTokenInput": {"token": self._refresh_token}},
+            auth=False,
+        )
+        tokens = data.get("authRefreshToken")
+        if not isinstance(tokens, dict):
+            raise UnexpectedResponseError
+        self._save_tokens(tokens)
+        LOGGER.debug("Access token refreshed")
+        return True
 
-        tokens = data["authRefreshToken"]
-        self._access_token = tokens.get("accessToken")
-        self._refresh_token = tokens.get("refreshToken")
-        LOGGER.info("Access token refreshed")
-        return not self._needs_refresh()
+    async def _execute_request(
+        self, query: str, variables: dict, headers: dict
+    ) -> dict:
+        """Bound transient read retries; never retry an uncertain mutation here."""
+        read = _is_read(query)
+        for attempt in range(2):
+            try:
+                return await asyncio.wait_for(
+                    self.graphql.execute_async(
+                        query=query, variables=variables, headers=headers
+                    ),
+                    timeout=30,
+                )
+            except HttpResponseError as err:
+                # 429 is a rejection, but only reads qualify for automatic retry.
+                delay = err.retry_after if err.retry_after is not None else 1.0
+                retryable = err.status in {429, 502, 503, 504}
+                if read and attempt == 0 and retryable and delay <= 30:
+                    await asyncio.sleep(delay)
+                    continue
+                if not read and err.status >= 500:
+                    raise MutationOutcomeUnknownError from err
+                raise
+            except (
+                aiohttp.ClientError,
+                json.JSONDecodeError,
+                asyncio.TimeoutError,
+                NoResponseError,
+            ) as err:
+                if read and attempt == 0:
+                    await asyncio.sleep(1)
+                    continue
+                error_type = NoResponseError if read else MutationOutcomeUnknownError
+                raise error_type from err
+        raise NoResponseError  # The bounded loop always returns or raises.
+
+    @staticmethod
+    def _response_errors(response: dict) -> list[dict]:
+        """Validate the error envelope before interpreting authentication failures."""
+        errors = response.get("errors") or []
+        if not isinstance(errors, list) or any(not isinstance(e, dict) for e in errors):
+            raise UnexpectedResponseError
+        return errors
 
     async def _make_request(
         self,
@@ -228,74 +275,64 @@ class BirdBuddy:
         reauth: bool = True,
         subscript: str | None = None,
     ) -> dict:
-        """Execute a GraphQL request and return the unwrapped ``data``.
+        """Execute with bounded auth recovery and preserve the requested shape.
 
-        Args:
-            query: The GraphQL query or mutation string.
-            variables: GraphQL variables, if any.
-            auth: Whether to attach auth headers (refreshing tokens first).
-            reauth: Whether to retry once after an expired-token error.
-            subscript: If set, return ``data[subscript]`` instead of ``data``.
-
-        Returns:
-            The response ``data`` dict, or ``data[subscript]`` when given.
-
-        Raises:
-            NoResponseError: If the response was empty or not a dict.
-            UnexpectedResponseError: If the response carried no ``data``.
-            GraphqlError: If the response reported one or more errors.
+        Raw request variables, responses and resolver messages are deliberately
+        absent from logs. Partial mutation responses are never replayed merely
+        because another field also reported an expired token.
         """
         if auth:
             await self._check_auth()
-            headers = self._headers()
-        else:
-            headers = {}
-
-        should_redact = query in [
-            queries.auth.REFRESH_AUTH_TOKEN,
-            queries.auth.SIGN_IN,
+        headers = self._headers() if auth else {}
+        sent_token = self._access_token
+        LOGGER.debug("Sending GraphQL %s", "read" if _is_read(query) else "mutation")
+        try:
+            response = await self._execute_request(query, variables or {}, headers)
+        except HttpResponseError as err:
+            if err.status != 401:
+                raise
+            response = {"errors": [{"extensions": {"code": AUTH_TOKEN_EXPIRED_ERROR}}]}
+        if not isinstance(response, dict) or not response:
+            if _is_read(query):
+                raise NoResponseError
+            raise MutationOutcomeUnknownError
+        errors = self._response_errors(response)
+        expired = [
+            e for e in errors if GraphqlError(e).error_code == AUTH_TOKEN_EXPIRED_ERROR
         ]
-        LOGGER.debug(
-            "> GraphQL %s, vars=%s",
-            query.partition("\n")[0],  # First line of query
-            _redact(variables, should_redact),
-        )
-        try:
-            response = await self.graphql.execute_async(
-                query=query,
-                variables=variables or {},
-                headers=headers,
+        if expired:
+            partial_data = response.get("data")
+            has_data = isinstance(partial_data, dict) and any(
+                value is not None for value in partial_data.values()
             )
-        except (aiohttp.ClientError, json.JSONDecodeError) as err:
-            # Preserve the fork's public failure type. Avoid logging the
-            # exception text here: transport errors can contain signed URLs.
-            raise NoResponseError from err
-
-        if not response or not isinstance(response, dict):
-            raise NoResponseError
-
-        errors = response.get("errors", [])
-        try:
-            GraphqlError.raise_errors(errors)
-        except AuthTokenExpiredError:
-            self._access_token = None
-            if auth and reauth:
-                # login and try again
+            safe_retry = _is_read(query) or (
+                len(expired) == len(errors) and not has_data
+            )
+            if auth and reauth and safe_retry:
+                await self._check_auth(expired_token=sent_token)
                 return await self._make_request(
                     query=query,
                     variables=variables,
                     auth=auth,
                     reauth=False,
+                    subscript=subscript,
                 )
-            raise
-
+            if not safe_retry:
+                raise MutationOutcomeUnknownError
+            failure = AuthenticationFailedError(
+                "Bird Buddy authentication was rejected"
+            )
+            self._auth_failure = failure
+            raise failure
+        GraphqlError.raise_errors(errors)
         result = response.get("data")
         if not isinstance(result, dict):
-            raise UnexpectedResponseError(response)
-
-        LOGGER.log(VERBOSE, "< response: %s", _redact(result, should_redact))
+            raise UnexpectedResponseError
         if subscript:
-            return result[subscript]
+            selected = result.get(subscript)
+            if not isinstance(selected, dict):
+                raise UnexpectedResponseError
+            return selected
         return result
 
     async def _iter_pages(
@@ -386,7 +423,7 @@ class BirdBuddy:
     async def refresh(self) -> bool:
         """Refresh the Bird Buddy feeder data."""
         data = await self._make_request(query=queries.me.ME)
-        LOGGER.debug("Feeder data refreshed successfully: %s", data)
+        LOGGER.debug("Feeder data refreshed successfully")
         return self._save_me(data["me"])
 
     async def toggle_off_grid(
@@ -423,7 +460,7 @@ class BirdBuddy:
             query=queries.feeder.TOGGLE_OFF_GRID,
             variables=variables,
         )
-        LOGGER.debug("Off-grid result: %s", result)
+        LOGGER.debug("Off-grid request completed")
         # The off-grid status doesn't get updated right away.
 
         new_off_grid = result["feederToggleOffGrid"]["feeder"]["offGrid"]
@@ -469,7 +506,7 @@ class BirdBuddy:
             query=queries.feeder.TOGGLE_AUDIO_ENABLED,
             variables=variables,
         )
-        LOGGER.debug("Audio toggle result: %s", result)
+        LOGGER.debug("Audio toggle request completed")
         # The status doesn't get updated right away.
 
         new_setting = result["feederToggleAudio"]["feeder"]["audioEnabled"]
@@ -827,7 +864,7 @@ class BirdBuddy:
         """
         if not isinstance(sighting_result, PostcardSighting):
             # See sighting_from_postcard()["sightingCreateFromPostcard"]
-            LOGGER.warning("Unexpected sighting result: %s", sighting_result)
+            LOGGER.warning("Unexpected sighting result")
             return False
 
         report = sighting_result.report
@@ -863,22 +900,14 @@ class BirdBuddy:
                     match_data["speciesCode"],
                     report,
                 )
-                LOGGER.debug(
-                    "replacing report after choosing species:\nold=%s\nnew=%s",
-                    report,
-                    new_report,
-                )
+                LOGGER.debug("Updated report after choosing species")
                 report = new_report
             elif mod.strategy == SightingFinishStrategy.MYSTERY:
                 new_report = await self._choose_mystery(
                     sighting.id,
                     report,
                 )
-                LOGGER.debug(
-                    "replacing report (mystery):\nold=%s\nnew=%s",
-                    report,
-                    new_report,
-                )
+                LOGGER.debug("Updated report after choosing mystery")
                 report = new_report
 
         variables = {
@@ -902,15 +931,13 @@ class BirdBuddy:
             media_ids = [m.id for m in sighting_result.medias]
             try:
                 share_result = await self.share_medias(media_ids, share=True)
-                LOGGER.info("Sharing %d medias: %s", len(media_ids), share_result)
-            except Exception as err:  # pylint: disable=broad-except  # noqa: BLE001
-                LOGGER.error(
-                    "Error sharing %d medias: %s",
+                LOGGER.info(
+                    "Media sharing result: success=%s, count=%d",
+                    share_result,
                     len(media_ids),
-                    err,
-                    exc_info=err,
                 )
-                share_result = False
+            except Exception as err:  # pylint: disable=broad-except  # noqa: BLE001
+                LOGGER.error("Media sharing failed (%s)", type(err).__name__)
         return result
 
     async def share_medias(self, media_ids: list[str], share: bool = True) -> bool:
@@ -1226,7 +1253,7 @@ class BirdBuddy:
                 # Should have been handled above.
                 return current_status
             raise
-        LOGGER.debug("start firmware update response: %s", data)
+        LOGGER.debug("Firmware update request completed")
         result = FeederUpdateStatus(data["feederFirmwareUpdateStart"])
         if result.is_complete:
             # After completion, update the Feeder state

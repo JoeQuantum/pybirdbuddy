@@ -11,6 +11,10 @@ mutation emailSignIn($emailSignInInput: EmailSignInInput!) {
       ...ProblemFields
       __typename
     }
+    ... on AuthUseSocialProblem {
+      socialProviders
+      __typename
+    }
     __typename
   }
 }

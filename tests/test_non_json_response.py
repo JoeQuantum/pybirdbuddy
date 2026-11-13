@@ -47,4 +47,4 @@ async def test_non_json_response_raises_no_response_error(
     with pytest.raises(NoResponseError) as exc_info:
         await bbclient._make_request(query="{ me { id } }", auth=False)
     assert exc_info.value.__cause__ is error
-    assert graphql_mock.await_count == 1
+    assert graphql_mock.await_count == 2

@@ -74,6 +74,6 @@ def logged_in_client() -> BirdBuddy:
 def mock_graphql() -> Iterator[AsyncMock]:
     """Patch GraphqlClient.execute_async and yield the mock."""
     with mock.patch(
-        "python_graphql_client.graphql_client.GraphqlClient.execute_async"
+        "birdbuddy.transport.BirdBuddyGraphqlClient.execute_async"
     ) as method:
         yield method

@@ -1,10 +1,16 @@
 """Bird Buddy errors."""
 
+import re
+
 AUTH_TOKEN_EXPIRED_ERROR = "AUTH_TOKEN_EXPIRED_ERROR"
 
 
 class NoResponseError(Exception):
     """The GraphQL request had no response."""
+
+
+class MutationOutcomeUnknownError(NoResponseError):
+    """A mutation may have completed; read its state before considering a replay."""
 
 
 class GraphqlError(Exception):
@@ -19,12 +25,19 @@ class GraphqlError(Exception):
             error: A single GraphQL error dict from the response.
         """
         self.response = error
-        super().__init__(f"{self.error_code}: {error}")
+        # Resolver messages can echo credentials, media URLs or private input.
+        # Keep the payload accessible explicitly, but safe in ordinary logs.
+        code = self.error_code or "UNKNOWN"
+        if not re.fullmatch(r"[A-Z0-9_]{1,80}", code):
+            code = "UNKNOWN"
+        super().__init__(f"Bird Buddy GraphQL error: {code}")
 
     @property
     def error_code(self) -> str | None:
         """The Bird Buddy GraphQL error code."""
-        return self.response.get("extensions", {}).get("code")
+        extensions = self.response.get("extensions")
+        code = extensions.get("code") if isinstance(extensions, dict) else None
+        return code if isinstance(code, str) else None
 
     @staticmethod
     def raise_errors(errors: list[dict]) -> None:
@@ -68,6 +81,19 @@ class AuthTokenExpiredError(GraphqlError):
 
 class AuthenticationFailedError(Exception):
     """The login attempt failed."""
+
+
+class SocialAuthenticationRequiredError(AuthenticationFailedError):
+    """The account requires a social sign-in provider unsupported by this client."""
+
+    def __init__(self, providers: list[str]) -> None:
+        """Retain only recognized public provider names for a useful UI error."""
+        self.providers = tuple(
+            provider
+            for provider in providers
+            if provider in {"APPLE", "FACEBOOK", "GOOGLE"}
+        )
+        super().__init__("This Bird Buddy account requires social sign-in")
 
 
 class NoFirmwareUpdateAvailableError(Exception):

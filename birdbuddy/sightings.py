@@ -7,7 +7,6 @@ from collections import UserDict
 from dataclasses import dataclass
 from enum import Enum
 import json
-import logging
 from typing import Any, cast
 
 from birdbuddy import LOGGER
@@ -201,10 +200,7 @@ class SightingReport(UserDict[str, Any]):
         Returns:
             The nested reportToken, or ``""`` if it is absent.
         """
-        (header, b64payload, _sig) = signed.split(".")
-        if LOGGER.isEnabledFor(logging.DEBUG):
-            decoded = base64.b64decode(header + "==", validate=False)
-            LOGGER.debug("Got signed reportToken: %s", decoded)
+        (_header, b64payload, _sig) = signed.split(".")
         # Decode the payload section to a json string
         payload_json = base64.b64decode(b64payload + "==", validate=False).decode(
             "utf-8", "ignore"
