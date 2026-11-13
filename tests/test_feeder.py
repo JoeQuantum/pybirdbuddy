@@ -64,11 +64,39 @@ def test_signal_and_battery():
 
 
 def test_signal_and_battery_defaults():
-    """Empty Signal/Battery payloads use their documented defaults."""
-    assert Signal({}).rssi == -1
+    """Absent metrics remain unknown instead of becoming invented readings."""
+    assert Signal({}).rssi is None
     assert Signal({}).state is MetricState.UNKNOWN
-    assert Battery({}).percentage == 0
-    assert Battery({}).is_charging is False
+    assert Battery({}).percentage is None
+    assert Battery({}).is_charging is None
+
+
+@pytest.mark.parametrize("metric", [None, {}])
+def test_null_telemetry_remains_unknown(metric):
+    """Owner/member payloads can legitimately lack an entire metric object."""
+    feeder = Feeder(dict.fromkeys(("battery", "signal", "food", "temperature"), metric))
+    assert feeder.battery.percentage is None
+    assert feeder.battery.is_charging is None
+    assert feeder.signal.rssi is None
+    assert feeder.food is MetricState.UNKNOWN
+    assert feeder.temperature is None
+
+
+def test_explicit_zero_telemetry_is_preserved():
+    """Measured zero and charging false are distinct from missing fields."""
+    feeder = Feeder(
+        {
+            "battery": {"percentage": 0, "charging": False},
+            "signal": {"value": 0},
+            "temperature": {"value": 0.0},
+            "food": {"state": "LOW"},
+        }
+    )
+    assert feeder.battery.percentage == 0
+    assert feeder.battery.is_charging is False
+    assert feeder.signal.rssi == 0
+    assert feeder.temperature == 0.0
+    assert feeder.food is MetricState.LOW
 
 
 def test_feeder_properties():

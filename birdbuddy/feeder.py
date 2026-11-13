@@ -241,9 +241,9 @@ class Signal(UserDict[str, Any]):
     """Wifi signal metrics."""
 
     @property
-    def rssi(self) -> int:
+    def rssi(self) -> int | None:
         """Signal strength."""
-        return self.get("value", -1)
+        return self.get("value")
 
     @property
     def state(self) -> MetricState:
@@ -255,14 +255,14 @@ class Battery(UserDict[str, Any]):
     """Battery info."""
 
     @property
-    def percentage(self) -> int:
+    def percentage(self) -> int | None:
         """Percentage of battery remaining."""
-        return self.get("percentage", 0)
+        return self.get("percentage")
 
     @property
-    def is_charging(self) -> bool:
+    def is_charging(self) -> bool | None:
         """Whether the battery is charging."""
-        return self.get("charging", False)
+        return self.get("charging")
 
     @property
     def state(self) -> MetricState:
@@ -396,12 +396,12 @@ class Feeder(UserDict[str, Any]):
     @property
     def battery(self) -> Battery:
         """Battery metrics."""
-        return Battery(self.get("battery", {}))
+        return Battery(self.get("battery") or {})
 
     @property
     def signal(self) -> Signal:
         """(wifi) signal metrics."""
-        return Signal(self.get("signal", {}))
+        return Signal(self.get("signal") or {})
 
     @property
     def location(self) -> tuple[str | None, str | None]:
@@ -455,17 +455,17 @@ class Feeder(UserDict[str, Any]):
         @incubating This field appears not to work currently.
         """
         LOGGER.debug("birdbuddy.Feeder.food is incubating")
-        return MetricState(self.get("food", {}).get("state", "UNKNOWN"))
+        return MetricState((self.get("food") or {}).get("state", "UNKNOWN"))
 
     @property
     # @incubating
-    def temperature(self) -> int:
+    def temperature(self) -> float | None:
         """Temperature at the feeder.
 
         @incubating This field appears not to work currently.
         """
         LOGGER.debug("birdbuddy.Feeder.temperature is incubating")
-        return self.get("temperature", {}).get("value", 0)
+        return (self.get("temperature") or {}).get("value")
 
 
 class FeederUpdateStatus(UserDict[str, Any]):
