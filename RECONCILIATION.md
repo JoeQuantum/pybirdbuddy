@@ -85,6 +85,37 @@ timestamp. Ongoing consumers must migrate to retrieval plus explicit
 acknowledgement; otherwise they keep receiving the pending batch. Its explicit
 `since` comparison remains strict; the batch interface uses an inclusive bound.
 
+## Device controls
+
+Audio, off-grid and power-profile controls accept a positive finite `timeout`
+in seconds (default 30). One deadline covers owner lookup, the initial mutation,
+progress checks and final refresh. The mutation is issued once. Audio and power
+use their query-based progress checks; off-grid uses the schema's mutation-based
+check. Finished and failed responses update the observed cache immediately.
+
+`FeederControlError` and its timeout/unavailable subclasses live in
+`birdbuddy.feeder`. Their `action_completed` attribute is `True` when the action
+finished but final refresh failed, `False` for a verified rejection/failure, and
+`None` when completion is uncertain. Refresh uncertain state before retrying a
+mutation. Cancellation propagates, and timeout preserves the last observed state.
+
+Controls require an explicit owner role, including when passed only a feeder ID.
+Audio additionally respects an explicitly false `supportsAudio`; missing data
+remains unknown. The normal account queries select that capability. The current
+schema's only feature lock is `LIVESTREAM`, so it cannot establish eligibility
+for these controls or paid power profiles. The server retains that decision.
+`selected_power_profile` and the existing `power_profile` both report the
+configured selection; neither claims to report actual Smart Energy behavior.
+The schema separately exposes `FeederSmartEnergyEnabled.runningPowerProfile`;
+these core accessors do not select that field.
+
+`FeederOptions` describes all eight supported update inputs, including housing,
+mounting and solar-roof enums. Unknown keys, invalid values and conflicting
+aliases fail before any request. `offlineMode` remains accepted as an `offGrid`
+alias. Off-grid changes use the bounded dedicated workflow; other options use
+`feederUpdate`. Mixed metadata and off-grid changes are sequential, so a later
+failure can leave earlier changes applied. Results report the observed state.
+
 ## Packaging and checks
 
 Package metadata and dependencies live in `pyproject.toml`; the old

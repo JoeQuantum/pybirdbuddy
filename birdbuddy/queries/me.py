@@ -85,6 +85,7 @@ fragment ListOwnerFeederFields on FeederForOwner {
   invitationsAvailable
   offGrid
   audioEnabled
+  supportsAudio
   powerProfile
   presenceUpdatedAt
   members {
@@ -438,6 +439,9 @@ fragment CollectionMainListFields on Collection {
 }
 fragment CollectionMediaFields on CollectionMedia {
   id
+  feeder {
+    id
+  }
   feederName
   liked
   likes
@@ -545,6 +549,9 @@ fragment CollectionMediaConnectionFields on CollectionMediaConnection {
 }
 fragment CollectionMediaFields on CollectionMedia {
   id
+  feeder {
+    id
+  }
   feederName
   liked
   likes

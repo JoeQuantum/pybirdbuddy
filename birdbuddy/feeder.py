@@ -4,9 +4,43 @@ from __future__ import annotations
 
 from collections import UserDict
 from enum import Enum
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 from birdbuddy import LOGGER
+
+
+class FeederControlError(Exception):
+    """A device control failed or its final state could not be confirmed."""
+
+    def __init__(self, reason: str, *, action_completed: bool | None = None) -> None:
+        """Keep safe local detail and distinguish completion from uncertainty."""
+        super().__init__(reason)
+        self.action_completed = action_completed
+
+
+class FeederControlTimeoutError(FeederControlError):
+    """The overall control budget expired; do not blindly repeat the mutation."""
+
+
+class FeederControlUnavailableError(FeederControlError):
+    """The selected account role or explicit capability forbids a control."""
+
+
+class FeederMountingType(Enum):
+    """Schema-supported mounting values accepted by the options mutation."""
+
+    HANGER = "HANGER"
+    NOT_SET = "NOT_SET"
+    OTHER = "OTHER"
+    POLE_MOUNT = "POLE_MOUNT"
+
+
+class FeederSolarRoof(Enum):
+    """Schema-supported solar-roof configuration, not inferred hardware support."""
+
+    NO = "NO"
+    NOT_SET = "NOT_SET"
+    YES = "YES"
 
 
 class MetricState(Enum):
@@ -117,6 +151,70 @@ class FeederHousingType(Enum):
         """Preserve compatibility with housing types not yet known."""
         LOGGER.warning("Unexpected housing type: %s", value)
         return cls.UNKNOWN
+
+
+class FeederOptions(TypedDict, total=False):
+    """Supported update input; offlineMode is a deprecated offGrid alias."""
+
+    lowBatteryNotification: bool
+    lowFoodNotification: bool
+    name: str
+    offGrid: bool
+    offlineMode: bool
+    housingType: FeederHousingType | Literal["CLASSIC", "HUMMINGBIRD", "BIRD_BATH"]
+    mountingType: (
+        FeederMountingType | Literal["HANGER", "NOT_SET", "OTHER", "POLE_MOUNT"]
+    )
+    solarRoof: FeederSolarRoof | Literal["NO", "NOT_SET", "YES"]
+
+
+def validate_feeder_options(options: dict[str, object]) -> dict[str, bool | str]:
+    """Normalize all supported values before permitting any account request."""
+    boolean_keys = {
+        "lowBatteryNotification",
+        "lowFoodNotification",
+        "offGrid",
+        "offlineMode",
+    }
+    enum_keys = {
+        "housingType": FeederHousingType,
+        "mountingType": FeederMountingType,
+        "solarRoof": FeederSolarRoof,
+    }
+    supported = boolean_keys | set(enum_keys) | {"name"}
+    if not options or set(options) - supported:
+        msg = "Provide only supported, non-empty feeder options"
+        raise ValueError(msg)
+    result: dict[str, bool | str] = {}
+    for key, value in options.items():
+        if key in boolean_keys:
+            if type(value) is not bool:
+                msg = "Boolean feeder options require bool values"
+                raise ValueError(msg)
+        elif key == "name":
+            if not isinstance(value, str) or not value.strip():
+                msg = "Feeder name must be a non-empty string"
+                raise ValueError(msg)
+        else:
+            expected = enum_keys[key]
+            value = (
+                value.value
+                if isinstance(value, Enum) and isinstance(value, expected)
+                else value
+            )
+            if not isinstance(value, str) or value not in {
+                member.value for member in expected if member.value != "UNKNOWN"
+            }:
+                msg = "Feeder option has an unsupported enum value"
+                raise ValueError(msg)
+        result[key] = value  # type: ignore[assignment]
+    if "offlineMode" in result:
+        legacy = result.pop("offlineMode")
+        if "offGrid" in result and result["offGrid"] != legacy:
+            msg = "offlineMode conflicts with offGrid"
+            raise ValueError(msg)
+        result["offGrid"] = legacy
+    return result
 
 
 class Signal(UserDict[str, Any]):
@@ -230,6 +328,12 @@ class Feeder(UserDict[str, Any]):
         return self.get("audioEnabled", None)
 
     @property
+    def supports_audio(self) -> bool | None:
+        """Explicit device capability; absent data remains unknown, not false."""
+        value = self.get("supportsAudio")
+        return value if isinstance(value, bool) else None
+
+    @property
     def owner(self) -> str | None:
         """The username who first paired the Feeder."""
         return self.get("ownerName")
@@ -277,6 +381,16 @@ class Feeder(UserDict[str, Any]):
         """
         value = self.get("powerProfile")
         return PowerProfile(value) if value else PowerProfile.UNKNOWN
+
+    @property
+    def selected_power_profile(self) -> PowerProfile:
+        """Configured selection from the owner's ``powerProfile`` field.
+
+        ``power_profile`` remains the compatible accessor. Neither property
+        selects or infers Smart Energy's separate ``runningPowerProfile``
+        field on the ``FeederSmartEnergyEnabled`` variant.
+        """
+        return self.power_profile
 
     @property
     # @incubating

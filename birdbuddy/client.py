@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
 import json
+from math import isfinite
 import re
-from typing import Any
+from time import monotonic
+from typing import Any, TypeVar
 
 import aiohttp
 import langcodes
-from typing_extensions import deprecated
+from typing_extensions import Unpack, deprecated
 
 from birdbuddy import LOGGER, queries
 from birdbuddy.const import BB_URL
@@ -34,8 +36,17 @@ from birdbuddy.feed import (
     FeedNodeType,
     PaginationError,
 )
-from birdbuddy.feeder import Feeder, FeederUpdateStatus, PowerProfile
-from birdbuddy.media import Collection, Media
+from birdbuddy.feeder import (
+    Feeder,
+    FeederControlError,
+    FeederControlTimeoutError,
+    FeederControlUnavailableError,
+    FeederOptions,
+    FeederUpdateStatus,
+    PowerProfile,
+    validate_feeder_options,
+)
+from birdbuddy.media import Collection, CollectionMedia, Media, is_media_expired
 from birdbuddy.postcards import CollectedPostcard, CollectionReceipt, PostcardAnalysis
 from birdbuddy.queries.debug import DUMP_SCHEMA
 from birdbuddy.sightings import (
@@ -50,12 +61,18 @@ from birdbuddy.transport import BirdBuddyGraphqlClient, HttpResponseError
 from birdbuddy.user import BirdBuddyUser
 from birdbuddy.visits import Visit, normalize_visit
 
+_ControlResult = TypeVar("_ControlResult")
+_CONTROL_POLL_INTERVAL = 0.25
+
 _NO_VALUE = object()
 """Sentinel value to allow None to override a default value."""
 
 _MAX_PAGE_SIZE = 100
 """The largest page size the API accepts; a larger ``first`` errors server
 side (HTTP 200 with a GraphQL ``INTERNAL_SERVER_ERROR``)."""
+
+_COLLECTIONS_TTL = 300
+"""Maximum age of a successful account collection snapshot in seconds."""
 
 
 def _is_read(query: str) -> bool:
@@ -123,6 +140,14 @@ class BirdBuddy:
         self._feed_lock = asyncio.Lock()
         self._feeders = {}
         self._collections = {}
+        self._collections_lock = asyncio.Lock()
+        self._collections_loaded = False
+        self._collections_updated_at = 0.0
+        self._collections_account_id: str | None = None
+        self._collections_type = "bird"
+        self._collections_revision = 0
+        self._collections_attempt = 0
+        self._collections_error: tuple[str | None, str, Exception] | None = None
         self.language_code = "en"
 
     def _save_me(self, me_data: dict) -> bool:
@@ -427,97 +452,176 @@ class BirdBuddy:
         LOGGER.debug("Feeder data refreshed successfully")
         return self._save_me(data["me"])
 
-    async def toggle_off_grid(
+    async def _with_control_timeout(
+        self,
+        operation: Callable[[dict[str, bool]], Awaitable[_ControlResult]],
+        timeout: float,
+    ) -> _ControlResult:
+        """Bound role lookup, the mutation, progress checks and final refresh."""
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not isfinite(timeout)
+            or timeout <= 0
+        ):
+            msg = "Control timeout must be positive and finite"
+            raise ValueError(msg)
+        progress = {"completed": False}
+        try:
+            return await asyncio.wait_for(operation(progress), timeout=timeout)
+        except asyncio.TimeoutError as err:
+            msg = "Device control timed out; refresh state before retrying"
+            raise FeederControlTimeoutError(
+                msg,
+                action_completed=True if progress["completed"] else None,
+            ) from err
+
+    async def _control_feeder(self, feeder: Feeder | str) -> Feeder:
+        """Resolve an explicit owner role before any mutation."""
+        if isinstance(feeder, Feeder):
+            selected = self._feeders.get(feeder.id, feeder)
+            feeder_id = feeder.id
+        elif isinstance(feeder, str) and feeder:
+            feeder_id = feeder
+            selected = self._feeders.get(feeder_id)
+        else:
+            msg = "A feeder object or non-empty ID is required"
+            raise ValueError(msg)
+        if selected is None or not selected.get("__typename"):
+            await self.refresh()
+            selected = self._feeders.get(feeder_id)
+        if selected is None or not selected.is_owner:
+            msg = "Device control requires an owner account"
+            raise FeederControlUnavailableError(msg, action_completed=False)
+        self._feeders.setdefault(feeder_id, selected)
+        return selected
+
+    def _cache_control_result(
+        self, feeder: Feeder, result: dict, root: str, field: str
+    ) -> str:
+        """Validate a union result, preserving only the returned observed state."""
+        prefix = root[0].upper() + root[1:]
+        kind = result.get("__typename")
+        if not isinstance(kind, str) or kind not in {
+            prefix + suffix
+            for suffix in ("FinishedResult", "InProgressResult", "FailedResult")
+        }:
+            msg = "Unrecognized device control result"
+            raise FeederControlError(msg)
+        state = result.get("feeder")
+        if not isinstance(state, dict) or state.get("id", feeder.id) != feeder.id:
+            msg = "Device control returned an invalid feeder"
+            raise FeederControlError(msg)
+        expected_type = str if field == "powerProfile" else bool
+        if (
+            type(state.get(field)) is not expected_type
+            or state.get("__typename", "FeederForOwner") != "FeederForOwner"
+        ):
+            msg = "Device control returned invalid state or role"
+            raise FeederControlError(msg)
+        feeder.update(state)
+        if kind == prefix + "FailedResult":
+            msg = "Device reported control failure"
+            raise FeederControlError(msg, action_completed=False)
+        return kind
+
+    async def _confirm_control_state(self, progress: dict[str, bool]) -> None:
+        """A completed mutation is not repeated if its final refresh fails."""
+        progress["completed"] = True
+        try:
+            refreshed = await self.refresh()
+        except Exception as err:
+            msg = "Device action completed, but final state refresh failed"
+            raise FeederControlError(
+                msg,
+                action_completed=True,
+            ) from err
+        if not refreshed:
+            msg = "Device action completed, but final refresh returned no account state"
+            raise FeederControlError(
+                msg,
+                action_completed=True,
+            )
+
+    async def _control_operation(
         self,
         feeder: Feeder | str,
-        is_off_grid: bool,
+        field: str,
+        value: bool | str,
+        progress: dict[str, bool],
     ) -> Feeder:
-        """Toggle the feeder's off-grid status.
-
-        Available to the owner account only.
-
-        Args:
-            feeder: The Feeder or its id to update.
-            is_off_grid: Whether to enable off-grid mode.
-
-        Returns:
-            The Feeder once the status has updated.
-        """
-        if isinstance(feeder, Feeder):
-            feeder_id = feeder.id
-            if not feeder.is_owner:
-                LOGGER.warning("Off-grid is available only to owner accounts")
-                # The request will fail
-        else:
-            # We cannot check the owner status if we only have an id
-            feeder_id = feeder
-        variables = {
-            "feederId": feeder_id,
-            "feederToggleOffGridInput": {
-                "offGrid": is_off_grid,
-            },
+        """Issue a control once, then use its actual API progress operation."""
+        selected = await self._control_feeder(feeder)
+        if field == "audioEnabled" and selected.supports_audio is False:
+            msg = "Audio is unavailable on this feeder"
+            raise FeederControlUnavailableError(msg, action_completed=False)
+        operations = {
+            "offGrid": (
+                queries.feeder.TOGGLE_OFF_GRID,
+                queries.feeder.TOGGLE_OFF_GRID_CHECK,
+                "feederToggleOffGrid",
+            ),
+            "audioEnabled": (
+                queries.feeder.TOGGLE_AUDIO_ENABLED,
+                queries.feeder.TOGGLE_AUDIO_ENABLED_CHECK,
+                "feederToggleAudio",
+            ),
+            "powerProfile": (
+                queries.feeder.UPDATE_POWER_PROFILE,
+                queries.feeder.UPDATE_POWER_PROFILE_CHECK,
+                "feederUpdatePowerProfile",
+            ),
         }
+        query, check_query, root = operations[field]
         result = await self._make_request(
-            query=queries.feeder.TOGGLE_OFF_GRID,
-            variables=variables,
+            query=query,
+            variables={"feederId": selected.id, root + "Input": {field: value}},
+            subscript=root,
         )
-        LOGGER.debug("Off-grid request completed")
-        # The off-grid status doesn't get updated right away.
+        while True:
+            kind = self._cache_control_result(selected, result, root, field)
+            if kind.endswith("FinishedResult"):
+                break
+            await asyncio.sleep(_CONTROL_POLL_INTERVAL)
+            result = await self._make_request(
+                query=check_query,
+                variables={"feederId": selected.id},
+                subscript=root + "Check",
+            )
+        await self._confirm_control_state(progress)
+        current = self._feeders.get(selected.id)
+        if current is None or current.get(field) != value:
+            msg = "Completed control did not confirm the requested state"
+            raise FeederControlError(msg, action_completed=True)
+        return current
 
-        new_off_grid = result["feederToggleOffGrid"]["feeder"]["offGrid"]
-
-        while new_off_grid != is_off_grid:
-            LOGGER.debug("waiting for off-grid to update")
-            await asyncio.sleep(1)
-            await self.refresh()
-            new_off_grid = self.feeders[feeder_id].is_off_grid
-        return self.feeders[feeder_id]
+    async def toggle_off_grid(
+        self, feeder: Feeder | str, is_off_grid: bool, *, timeout: float = 30.0
+    ) -> Feeder:
+        """Set off-grid mode once and confirm completion within one time budget."""
+        if type(is_off_grid) is not bool:
+            msg = "off-grid requires a bool value"
+            raise ValueError(msg)
+        return await self._with_control_timeout(
+            lambda progress: self._control_operation(
+                feeder, "offGrid", is_off_grid, progress
+            ),
+            timeout,
+        )
 
     async def toggle_audio_enabled(
-        self,
-        feeder: Feeder | str,
-        is_audio_enabled: bool,
+        self, feeder: Feeder | str, is_audio_enabled: bool, *, timeout: float = 30.0
     ) -> Feeder:
-        """Toggle the feeder's audio-enabled setting.
-
-        Available to the owner account only.
-
-        Args:
-            feeder: The Feeder or its id to update.
-            is_audio_enabled: Whether videos should include audio.
-
-        Returns:
-            The Feeder once the setting has updated.
-        """
-        if isinstance(feeder, Feeder):
-            feeder_id = feeder.id
-            if not feeder.is_owner:
-                LOGGER.warning("Audio setting is available only to owner accounts")
-                # The request will fail
-        else:
-            # We cannot check the owner status if we only have an id
-            feeder_id = feeder
-        variables = {
-            "feederId": feeder_id,
-            "feederToggleAudioInput": {
-                "audioEnabled": is_audio_enabled,
-            },
-        }
-        result = await self._make_request(
-            query=queries.feeder.TOGGLE_AUDIO_ENABLED,
-            variables=variables,
+        """Set audio once, respecting explicit owner/capability information."""
+        if type(is_audio_enabled) is not bool:
+            msg = "audio-enabled requires a bool value"
+            raise ValueError(msg)
+        return await self._with_control_timeout(
+            lambda progress: self._control_operation(
+                feeder, "audioEnabled", is_audio_enabled, progress
+            ),
+            timeout,
         )
-        LOGGER.debug("Audio toggle request completed")
-        # The status doesn't get updated right away.
-
-        new_setting = result["feederToggleAudio"]["feeder"]["audioEnabled"]
-
-        while new_setting != is_audio_enabled:
-            LOGGER.debug("waiting for audio setting to update")
-            await asyncio.sleep(1)
-            await self.refresh()
-            new_setting = self.feeders[feeder_id].is_audio_enabled
-        return self.feeders[feeder_id]
 
     async def feed(
         self,
@@ -1214,112 +1318,188 @@ class BirdBuddy:
         )
         return SightingReport(data["sightingConvertToMysteryVisitor"])
 
-    async def refresh_collections(self, of_type: str = "bird") -> dict[str, Collection]:
-        """Fetch and cache the remote collections.
+    async def refresh_collections(
+        self, of_type: str = "bird", *, force: bool = False
+    ) -> dict[str, Collection]:
+        """Reconcile a complete snapshot, coalescing concurrent refresh calls.
+
+        A successful snapshot, including an empty one, is reused for up to
+        five minutes. Expired cover URLs also make it stale. ``collections``
+        retains known metadata on refresh failure; it never implies freshness.
 
         Args:
             of_type: The collection type to keep (e.g. ``"bird"``).
+            force: Fetch despite a fresh cached snapshot. Concurrent callers
+                still share a refresh completed while they waited.
 
         Returns:
             The cached collections, keyed by collection id.
         """
+        revision = self._collections_revision
+        attempt = self._collections_attempt
+        async with self._collections_lock:
+            await self._check_auth()
+            account_id = self._me.id if self._me else None
+            if (
+                attempt != self._collections_attempt
+                and (error := self._collections_error) is not None
+                and error[:2] == (account_id, of_type)
+            ):
+                raise error[2]
+            same_type = self._collections_type == of_type
+            if (
+                same_type
+                and self.collections_loaded
+                and (
+                    revision != self._collections_revision
+                    or (not force and not self.collections_stale)
+                )
+            ):
+                return self._collections
+            try:
+                snapshot = await self._fetch_collection_snapshot(of_type, account_id)
+            except Exception as err:
+                self._collections_attempt += 1
+                self._collections_error = (account_id, of_type, err)
+                raise
+            self._apply_collection_snapshot(snapshot, account_id, of_type)
+            return self._collections
+
+    async def _fetch_collection_snapshot(
+        self, of_type: str, account_id: str | None
+    ) -> dict[str, dict]:
+        """Read and validate one complete snapshot in its original account."""
         data = await self._make_request(query=queries.me.COLLECTIONS)
-        collections = {
-            (c := Collection(d)).collection_id: c
-            for d in data["me"]["collections"]
-            # __typename: CollectionBird
-            if d["__typename"] == f"Collection{of_type.capitalize()}"
-        }
-        self._collections.update(collections)
-        return self._collections
+        snapshot = self._collection_snapshot(data, of_type)
+        if account_id != (self._me.id if self._me else None):
+            raise UnexpectedResponseError()
+        return snapshot
+
+    def _apply_collection_snapshot(
+        self, snapshot: dict[str, dict], account_id: str | None, of_type: str
+    ) -> None:
+        """Publish a validated snapshot without replacing surviving objects."""
+        if account_id != self._collections_account_id:
+            self._collections.clear()
+        for key in self._collections.keys() - snapshot.keys():
+            del self._collections[key]
+        for key, value in snapshot.items():
+            if key in self._collections:
+                self._collections[key].clear()
+                self._collections[key].update(value)
+            else:
+                self._collections[key] = Collection(value)
+        self._collections_account_id = account_id
+        self._collections_type = of_type
+        self._collections_loaded = True
+        self._collections_updated_at = monotonic()
+        self._collections_revision += 1
+        self._collections_attempt += 1
+        self._collections_error = None
+
+    @staticmethod
+    def _collection_snapshot(data: dict, of_type: str) -> dict[str, dict]:
+        """Validate every entry before changing the last successful cache."""
+        try:
+            rows = data["me"]["collections"]
+            if not isinstance(rows, list):
+                raise UnexpectedResponseError(data)
+            snapshot = {}
+            seen = set()
+            for row in rows:
+                if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+                    raise UnexpectedResponseError(data)
+                if not row["id"] or not isinstance(row.get("__typename"), str):
+                    raise UnexpectedResponseError(data)
+                if row["id"] in seen:
+                    raise UnexpectedResponseError(data)
+                seen.add(row["id"])
+                if row["__typename"] != f"Collection{of_type.capitalize()}":
+                    continue
+                if (
+                    type(row.get("visitsAllTime")) is not int
+                    or row["visitsAllTime"] < 0
+                ):
+                    raise UnexpectedResponseError(data)
+                if row.get("visitsAllTime") == 0:
+                    continue
+                cover = row.get("coverCollectionMedia")
+                if not isinstance(cover, dict) or not isinstance(
+                    cover.get("media"), dict
+                ):
+                    raise UnexpectedResponseError(data)
+                snapshot[row["id"]] = row
+        except (KeyError, TypeError) as err:
+            raise UnexpectedResponseError(data) from err
+        return snapshot
 
     async def set_feeder_options(
-        self, feeder: Feeder | str, **kwargs: bool | str
+        self,
+        feeder: Feeder | str,
+        *,
+        timeout: float = 30.0,
+        **kwargs: Unpack[FeederOptions],
     ) -> dict:
-        """Update Feeder options.
+        """Validate supported options, including the deprecated offlineMode alias.
 
-        Args:
-            feeder: The Feeder or its id to update.
-            **kwargs: Feeder options to set. Recognized keys:
-                ``lowBatteryNotification`` (bool), ``lowFoodNotification``
-                (bool), ``name`` (str), ``offGrid`` (bool), ``offlineMode``
-                (bool).
-
-        Returns:
-            The updated feeder-options payload.
+        All keys and values are validated before any request. offGrid uses its
+        dedicated bounded control workflow. Other options use feederUpdate.
+        Mixed changes are sequential; the API provides no atomic transaction.
         """
-        if isinstance(feeder, Feeder):
-            feeder_id = feeder.id
-            if not feeder.is_owner:
-                LOGGER.warning("Setting Feeder options requires an owner account")
-        else:
-            feeder_id = feeder
-        variables = {
-            "feederId": feeder_id,
-            "feederUpdateInput": {
-                k: v
-                for (k, v) in kwargs.items()
-                if k
-                in [
-                    "lowBatteryNotification",
-                    "lowFoodNotification",
-                    "name",
-                    "offGrid",
-                    "offlineMode",
-                ]
-            },
-        }
-        updated = await self._make_request(
-            query=queries.feeder.SET_OPTIONS,
-            variables=variables,
-            subscript="feederUpdate",
+        options = validate_feeder_options(dict(kwargs))
+        return await self._with_control_timeout(
+            lambda progress: self._set_options_operation(feeder, options, progress),
+            timeout,
         )
-        self.feeders[feeder_id].update(updated)
-        return updated
+
+    async def _set_options_operation(
+        self,
+        feeder: Feeder | str,
+        options: dict[str, bool | str],
+        progress: dict[str, bool],
+    ) -> dict:
+        """Apply validated metadata and optionally converge the off-grid state."""
+        selected = await self._control_feeder(feeder)
+        metadata = {key: value for key, value in options.items() if key != "offGrid"}
+        if metadata:
+            updated = await self._make_request(
+                query=queries.feeder.SET_OPTIONS,
+                variables={"feederId": selected.id, "feederUpdateInput": metadata},
+                subscript="feederUpdate",
+            )
+            if (
+                updated.get("__typename") != "FeederForOwner"
+                or updated.get("id") != selected.id
+            ):
+                msg = "Feeder options returned an invalid owner result"
+                raise FeederControlError(msg)
+            selected.update(updated)
+        if "offGrid" in options:
+            selected = await self._control_operation(
+                feeder, "offGrid", options["offGrid"], progress
+            )
+        else:
+            await self._confirm_control_state(progress)
+        current = self._feeders.get(selected.id)
+        if current is None:
+            msg = "Feeder options completed, but the feeder is no longer available"
+            raise FeederControlError(msg, action_completed=True)
+        return dict(current.data)
 
     async def set_power_profile(
-        self, feeder: Feeder | str, profile: PowerProfile
+        self, feeder: Feeder | str, profile: PowerProfile, *, timeout: float = 30.0
     ) -> dict:
-        """Update the feeder's power profile.
-
-        Args:
-            feeder: The Feeder or its id to update.
-            profile: The power profile to set.
-
-        Returns:
-            A dict with the resulting ``powerProfile``.
-        """
-        if isinstance(feeder, Feeder):
-            feeder_id = feeder.id
-            if not feeder.is_owner:
-                LOGGER.warning("Frequency setting is available only to owner accounts")
-        else:
-            feeder_id = feeder
-        variables = {
-            "feederId": feeder_id,
-            "feederUpdatePowerProfileInput": {
-                "powerProfile": profile.value,
-            },
-        }
-        result = await self._make_request(
-            query=queries.feeder.UPDATE_POWER_PROFILE,
-            variables=variables,
-            subscript="feederUpdatePowerProfile",
+        """Set a known configured profile; never infer actual running behavior."""
+        if not isinstance(profile, PowerProfile) or profile is PowerProfile.UNKNOWN:
+            msg = "A supported PowerProfile is required"
+            raise ValueError(msg)
+        selected = await self._with_control_timeout(
+            lambda progress: self._control_operation(
+                feeder, "powerProfile", profile.value, progress
+            ),
+            timeout,
         )
-        # May raise GraphqlError `PAYMENTS_SUBSCRIPTION_IS_NOT_ACTIVE`,
-        # implying that `FRENZY_MODE` is a paid feature.
-        updated = {"powerProfile": result.get("feeder", {}).get("powerProfile", None)}
-
-        if result["__typename"] == "FeederUpdatePowerProfileInProgressResult":
-            # Refresh after a short delay
-            # We could also poll `feederUpdatePowerProfileCheck`
-            LOGGER.debug("PowerProfile update is in progress")
-            await asyncio.sleep(0.25)
-            await self.refresh()
-            updated["powerProfile"] = self.feeders[feeder_id].power_profile.value
-        else:
-            self.feeders[feeder_id].update(updated)
-        return updated
+        return {"powerProfile": selected.get("powerProfile")}
 
     async def update_firmware_start(self, feeder: Feeder | str) -> FeederUpdateStatus:
         """Start a firmware update.
@@ -1413,10 +1593,33 @@ class BirdBuddy:
             )
             return {}
 
-        for collection in list(self._collections.values()):
-            if collection.cover_media.is_expired:
-                del self._collections[collection.collection_id]
+        if self._collections_account_id != (self._me.id if self._me else None):
+            return {}
         return self._collections
+
+    @property
+    def collections_loaded(self) -> bool:
+        """Whether this account has a successful snapshot, including empty."""
+        return self._collections_loaded and self._collections_account_id == (
+            self._me.id if self._me else None
+        )
+
+    @property
+    def collections_stale(self) -> bool:
+        """Whether a refresh is needed without deleting last-known metadata."""
+        if not self.collections_loaded:
+            return True
+        if monotonic() - self._collections_updated_at >= _COLLECTIONS_TTL:
+            return True
+        for collection in self._collections.values():
+            wrapper = collection.get("coverCollectionMedia")
+            media = wrapper.get("media") if isinstance(wrapper, dict) else None
+            if isinstance(media, dict) and any(
+                is_media_expired(media.get(key))
+                for key in ("thumbnailUrl", "contentUrl")
+            ):
+                return True
+        return False
 
     async def collection(
         self, collection_id: str, page_size: int = 50, *, max_pages: int = 100
@@ -1451,8 +1654,9 @@ class BirdBuddy:
         async for media in pages:
             try:
                 for edge in media["edges"]:
-                    node = edge["node"]["media"]
-                    result[node["id"]] = Media(node)
+                    wrapper = edge["node"]
+                    node = wrapper["media"]
+                    result[node["id"]] = CollectionMedia(wrapper, collection_id)
             except (KeyError, TypeError) as err:
                 raise UnexpectedResponseError(media) from err
         return result

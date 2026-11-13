@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import UserDict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -58,26 +58,71 @@ class Media(UserDict[str, Any]):
         return is_media_expired(self.thumbnail_url)
 
 
-def is_media_expired(media_url: str) -> bool | None:
+def is_media_expired(media_url: str | None) -> bool | None:
     """Report whether a signed media URL has expired.
 
     Args:
-        media_url: A signed media URL carrying an ``Expires`` query param.
+        media_url: A CloudFront or S3 signed media URL.
 
     Returns:
         ``True`` if expired, ``False`` if still valid, or ``None`` when the
-        URL is empty or carries no expiry.
+        URL is empty or carries no usable expiry metadata.
     """
-    if not media_url:
+    if not isinstance(media_url, str) or not media_url:
         return None
-    expires = parse_qs(urlparse(media_url).query).get("Expires")
-    if not expires:
+    try:
+        query = parse_qs(urlparse(media_url).query)
+        if expires := query.get("Expires"):
+            return int(expires[-1]) <= time.time()
+        if (dates := query.get("X-Amz-Date")) and (
+            durations := query.get("X-Amz-Expires")
+        ):
+            issued = datetime.strptime(dates[-1], "%Y%m%dT%H%M%SZ").replace(
+                tzinfo=timezone.utc
+            )
+            return (
+                issued + timedelta(seconds=int(durations[-1]))
+            ).timestamp() <= time.time()
+    except (TypeError, ValueError, OverflowError):
         return None
-    expiry = int(expires[-1])
-    if not expiry:
-        return None
-    now = time.time()
-    return expiry < now
+    return None
+
+
+class CollectionMedia(Media):
+    """A media item with its collection wrapper and explicit feeder attribution.
+
+    The ordinary Media mapping remains unchanged for existing consumers. The
+    wrapper is retained separately; feeder identity never comes from its URL.
+    """
+
+    def __init__(
+        self, wrapper: dict[str, Any], collection_id: str | None = None
+    ) -> None:
+        """Retain the media and the metadata returned by the collection query."""
+        super().__init__(wrapper["media"])
+        self.collection_id = collection_id
+        self.collection_metadata = {
+            key: value for key, value in wrapper.items() if key != "media"
+        }
+
+    @property
+    def collection_media_id(self) -> str | None:
+        """The wrapper ID, distinct from the nested media ID."""
+        value = self.collection_metadata.get("id")
+        return value if isinstance(value, str) else None
+
+    @property
+    def feeder_id(self) -> str | None:
+        """The explicitly returned feeder ID, when present."""
+        feeder = self.collection_metadata.get("feeder")
+        value = feeder.get("id") if isinstance(feeder, dict) else None
+        return value if isinstance(value, str) else None
+
+    @property
+    def feeder_name(self) -> str | None:
+        """The display name reported on this collection-media wrapper."""
+        value = self.collection_metadata.get("feederName")
+        return value if isinstance(value, str) else None
 
 
 class Collection(UserDict[str, Any]):
@@ -127,6 +172,6 @@ class Collection(UserDict[str, Any]):
         return self["coverCollectionMedia"].get("feederName")
 
     @property
-    def cover_media(self) -> Media:
+    def cover_media(self) -> CollectionMedia:
         """The cover media."""
-        return Media(self["coverCollectionMedia"]["media"])
+        return CollectionMedia(self["coverCollectionMedia"], self.collection_id)

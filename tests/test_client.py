@@ -679,24 +679,16 @@ async def test_refresh_collections_keeps_only_birds(
 
 
 @pytest.mark.asyncio
-async def test_set_feeder_options_filters_unknown_keys(
+async def test_set_feeder_options_rejects_unknown_keys(
     bbclient: BirdBuddy, graphql_mock: AsyncMock, api_payloads: dict
 ):
-    """set_feeder_options sends only recognized keys and caches the result.
-
-    Response shape matches the SET_OPTIONS selection set (FeederForOwner).
-    """
+    """Unknown options fail before a valid option can be partially applied."""
     feeder_data = api_payloads["me"]["feeders"][0]
     fid = feeder_data["id"]
     bbclient._feeders[fid] = Feeder(feeder_data)
-    updated = {"id": fid, "name": "Renamed", "__typename": "FeederForOwner"}
-    graphql_mock.side_effect = [{"data": {"feederUpdate": updated}}]
-    result = await bbclient.set_feeder_options(fid, name="Renamed", bogus="x")
-    assert result == updated
-    variables = graphql_mock.call_args_list[0].kwargs["variables"]
-    assert variables["feederId"] == fid
-    assert variables["feederUpdateInput"] == {"name": "Renamed"}
-    assert bbclient.feeders[fid]["name"] == "Renamed"
+    with pytest.raises(ValueError, match="supported"):
+        await bbclient.set_feeder_options(fid, name="Renamed", bogus="x")  # type: ignore[call-arg]
+    graphql_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -735,7 +727,15 @@ async def test_set_power_profile_refreshes_after_async_change(
     }
     me_after = copy.deepcopy(api_payloads["me"])
     me_after["feeders"][0]["powerProfile"] = "POWER_SAVER_MODE"
-    graphql_mock.side_effect = [in_progress, {"data": {"me": me_after}}]
+    finished = {
+        "data": {
+            "feederUpdatePowerProfileCheck": {
+                "__typename": "FeederUpdatePowerProfileFinishedResult",
+                "feeder": {"id": fid, "powerProfile": "POWER_SAVER_MODE"},
+            }
+        }
+    }
+    graphql_mock.side_effect = [in_progress, finished, {"data": {"me": me_after}}]
 
     result = await bbclient.set_power_profile(fid, PowerProfile.POWER_SAVE)
     assert result == {"powerProfile": "POWER_SAVER_MODE"}

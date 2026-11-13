@@ -116,6 +116,7 @@ fragment ListOwnerFeederFields on FeederForOwner {
   invitationsAvailable
   offGrid
   audioEnabled
+  supportsAudio
   powerProfile
   presenceUpdatedAt
   serialNumber
