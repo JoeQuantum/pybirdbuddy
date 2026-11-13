@@ -1,4 +1,66 @@
-"""Queries related to birds and sightings"""
+"""Queries related to birds and sightings."""
+
+POSTCARD_REANALYZE = """
+mutation ReanalyzePostcard($feedItemId: ID!) {
+  inferenceExternalPostcardReanalyze(feedItemId: $feedItemId) {
+    updatedFeedItem {
+      __typename
+      ... on FeedItemNewPostcard {
+        id
+        createdAt
+        inferenceConfidenceLevel
+        inferenceExecutionMode
+        inferenceType
+        reanalyzeAvailability
+        feeder {
+          __typename
+          ... on Feeder {
+            id
+            name
+          }
+        }
+        medias {
+          __typename
+          id
+          createdAt
+          thumbnailUrl
+          ... on MediaImage {
+            contentUrl(size: ORIGINAL)
+            __typename
+          }
+          ... on MediaVideo {
+            contentUrl(size: ORIGINAL)
+            __typename
+          }
+        }
+        sightingReportPreview {
+          sightings {
+            __typename
+            ... on SightingRecognizedBird {
+              species {
+                __typename
+                ... on Species {
+                  id
+                  name
+                }
+              }
+            }
+            ... on SightingRecognizedBirdUnlocked {
+              species {
+                __typename
+                ... on Species {
+                  id
+                  name
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
 
 POSTCARD_TO_SIGHTING = """
 mutation sightingCreateFromPostcard($sightingCreateFromPostcardInput: SightingCreateFromPostcardInput!) {
@@ -11,7 +73,28 @@ mutation sightingCreateFromPostcard($sightingCreateFromPostcardInput: SightingCr
 }
 fragment SightingCreateFromPostcardFields on SightingCreateFromPostcardResult {
   feeder {
-    ...FeederFields
+    ... on FeederForMember {
+      id
+      name
+      state
+      __typename
+    }
+    ... on FeederForOwner {
+      id
+      name
+      state
+      __typename
+    }
+    ... on FeederForPublic {
+      id
+      name
+      __typename
+    }
+    ... on FeederForRemoteGuest {
+      id
+      name
+      __typename
+    }
     __typename
   }
   medias {
@@ -26,12 +109,6 @@ fragment SightingCreateFromPostcardFields on SightingCreateFromPostcardResult {
     ...MediaFullFields
     __typename
   }
-  __typename
-}
-fragment FeederFields on Feeder {
-  id
-  name
-  state
   __typename
 }
 fragment MediaFullFields on Media {
@@ -479,3 +556,63 @@ mutation mediaShareToggle($mediaShareToggleInput: MediaShareToggleInput!) {
   }
 }
 """.strip()
+
+
+_COLLECTED_POSTCARD_FIELDS = """
+fragment CollectedPostcardFields on FeedItemCollectedPostcard {
+  __typename
+  id
+  createdAt
+  hasMysteryVisitor
+  hasNewSpecies
+  inferenceExecutionMode
+  inferenceType
+  mediaSpeciesNameIdentificationConfidenceLevel
+  species {
+    id
+    name
+  }
+  mediaSpeciesAssignedName {
+    id
+    name
+    markedAsNew
+    species {
+      id
+      name
+    }
+  }
+  medias {
+    __typename
+    id
+    createdAt
+    thumbnailUrl
+    ... on MediaImage {
+      contentUrl(size: ORIGINAL)
+      __typename
+    }
+    ... on MediaVideo {
+      contentUrl(size: ORIGINAL)
+      __typename
+    }
+  }
+}
+"""
+
+
+POSTCARD_COLLECT = (
+    """
+mutation postcardCollect(
+  $feedItemId: ID!, $postcardCollectInput: PostcardCollectInput
+) {
+  postcardCollect(feedItemId: $feedItemId, input: $postcardCollectInput) {
+    postcardCollectedDetails {
+      isFirstCollectedPostcard
+    }
+    collectedPostcard {
+      ...CollectedPostcardFields
+    }
+  }
+}
+"""
+    + _COLLECTED_POSTCARD_FIELDS
+).strip()

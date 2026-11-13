@@ -1,4 +1,4 @@
-"""Authentication queries"""
+"""Authentication queries."""
 
 SIGN_IN = """
 mutation emailSignIn($emailSignInInput: EmailSignInInput!) {
@@ -68,12 +68,12 @@ fragment ListMemberFeederFields on FeederForMember {
   locationCity
   locationCountry
   ownerName
-  housingType
-  version
   __typename
 }
 
 fragment ListFeederFields on FeederForPrivate {
+  housingType
+  version
   battery {
     charging
     percentage
@@ -115,8 +115,6 @@ fragment ListOwnerFeederFields on FeederForOwner {
   powerProfile
   presenceUpdatedAt
   serialNumber
-  housingType
-  version
   members {
     ...FeederMemberFields
     __typename

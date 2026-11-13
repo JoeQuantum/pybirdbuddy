@@ -1,9 +1,11 @@
+"""Preserve the fork's transport-error compatibility contract."""
+
 import json
 from unittest.mock import AsyncMock
 
 import aiohttp
-import pytest
 from multidict import CIMultiDict, CIMultiDictProxy
+import pytest
 from yarl import URL
 
 from birdbuddy.client import BirdBuddy
@@ -11,6 +13,7 @@ from birdbuddy.exceptions import NoResponseError
 
 
 def _content_type_error() -> aiohttp.ContentTypeError:
+    """Model the HTML error pages returned by an unhealthy API gateway."""
     request_info = aiohttp.RequestInfo(
         url=URL("https://bird.buddy/api"),
         method="POST",
@@ -39,6 +42,9 @@ async def test_non_json_response_raises_no_response_error(
     graphql_mock: AsyncMock,
     error: Exception,
 ):
+    """Network and non-JSON failures retain a common public error and cause."""
     graphql_mock.side_effect = error
-    with pytest.raises(NoResponseError):
+    with pytest.raises(NoResponseError) as exc_info:
         await bbclient._make_request(query="{ me { id } }", auth=False)
+    assert exc_info.value.__cause__ is error
+    assert graphql_mock.await_count == 1

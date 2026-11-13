@@ -1,0 +1,14 @@
+{
+  "pythonVersion": "3.10",
+  "exclude": ["**/__pycache__", "**/.*", "build", "dist", "venv"],
+  "include": ["birdbuddy", "tests", "scripts"],
+  "reportIncompatibleVariableOverride": false,
+  "executionEnvironments": [
+    {
+      "root": "tests",
+      "extraPaths": ["."],
+      "reportTypedDictNotRequiredAccess": false,
+      "reportOptionalMemberAccess": false
+    }
+  ]
+}

@@ -1,3 +1,5 @@
+"""Preserve the fork's tolerant legacy strategy parsing."""
+
 import logging
 
 import pytest
@@ -6,6 +8,7 @@ from birdbuddy.sightings import SightingFinishStrategy
 
 
 def test_missing_value_returns_mystery(caplog):
+    """An unknown legacy strategy retains the fork's MYSTERY fallback."""
     with caplog.at_level(logging.WARNING, logger="birdbuddy"):
         result = SightingFinishStrategy("nonexistent_strategy")
     assert result is SightingFinishStrategy.MYSTERY
@@ -21,4 +24,5 @@ def test_missing_value_returns_mystery(caplog):
     ],
 )
 def test_known_values_still_resolve(value, expected):
+    """Known strategy spellings retain their existing meanings."""
     assert SightingFinishStrategy(value) is expected

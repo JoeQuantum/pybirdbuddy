@@ -1,4 +1,4 @@
-"""Queries related to the logged in user"""
+"""Queries related to the logged in user."""
 
 ME = """
 query me {
@@ -46,11 +46,11 @@ fragment ListMemberFeederFields on FeederForMember {
   locationCity
   locationCountry
   ownerName
-  housingType
-  version
   __typename
 }
 fragment ListFeederFields on FeederForPrivate {
+  housingType
+  version
   battery {
     charging
     percentage
@@ -85,8 +85,6 @@ fragment ListOwnerFeederFields on FeederForOwner {
   audioEnabled
   powerProfile
   presenceUpdatedAt
-  housingType
-  version
   members {
     ...FeederMemberFields
     __typename
@@ -141,6 +139,11 @@ fragment FeedConnectionFields on FeedConnection {
   __typename
 }
 fragment AnyFeedItemFields on AnyFeedItem {
+  ... on FeedItem {
+    id
+    createdAt
+    __typename
+  }
   ... on FeedItemFeederInvitationConfirmed {
     ...FeederInvitationConfirmedFields
     __typename
