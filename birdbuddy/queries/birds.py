@@ -563,6 +563,7 @@ fragment CollectedPostcardFields on FeedItemCollectedPostcard {
   __typename
   id
   createdAt
+  feeder { __typename ... on Feeder { id name } }
   hasMysteryVisitor
   hasNewSpecies
   inferenceExecutionMode
@@ -607,6 +608,9 @@ mutation postcardCollect(
   postcardCollect(feedItemId: $feedItemId, input: $postcardCollectInput) {
     postcardCollectedDetails {
       isFirstCollectedPostcard
+      collectedPostcard {
+        ...CollectedPostcardFields
+      }
     }
     collectedPostcard {
       ...CollectedPostcardFields

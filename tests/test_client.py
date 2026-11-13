@@ -6,7 +6,11 @@ from unittest.mock import ANY, AsyncMock, call, patch
 import pytest
 
 from birdbuddy.client import BirdBuddy
-from birdbuddy.exceptions import NoFirmwareUpdateAvailableError, UnexpectedResponseError
+from birdbuddy.exceptions import (
+    NoFirmwareUpdateAvailableError,
+    PostcardOutcomeUnknownError,
+    UnexpectedResponseError,
+)
 from birdbuddy.feed import PaginationError
 from birdbuddy.feeder import Feeder, PowerProfile
 from birdbuddy.postcards import CollectedPostcard, PostcardAnalysis
@@ -553,13 +557,13 @@ async def test_collect_postcard(
     graphql_mock: AsyncMock,
     collect_flow: dict,
 ):
-    """collect_postcard reanalyzes, then collects into a CollectedPostcard."""
+    """Explicit identify=True reanalyzes before collection."""
     collected = collect_flow["postcard_collect"]["postcardCollect"]
     graphql_mock.side_effect = [
         _REANALYZED,
         {"data": {"postcardCollect": collected}},
     ]
-    result = await bbclient.collect_postcard(_PID)
+    result = await bbclient.collect_postcard(_PID, identify=True)
     assert isinstance(result, CollectedPostcard)
     assert result.has_mystery_visitor is False
     assert [s.name for s in result.species] == ["California Scrub-Jay"]
@@ -594,9 +598,9 @@ async def test_identify_postcard_unexpected_response(
 async def test_collect_postcard_unexpected_response(
     bbclient: BirdBuddy, graphql_mock: AsyncMock
 ):
-    """Missing collect fields raise UnexpectedResponseError."""
-    graphql_mock.side_effect = [_REANALYZED, {"data": {}}]
-    with pytest.raises(UnexpectedResponseError):
+    """Missing collect fields cannot become success if safe read also fails."""
+    graphql_mock.side_effect = [{"data": {}}, {"data": {}}]
+    with pytest.raises(PostcardOutcomeUnknownError):
         await bbclient.collect_postcard(_PID)
 
 

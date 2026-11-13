@@ -13,6 +13,19 @@ class MutationOutcomeUnknownError(NoResponseError):
     """A mutation may have completed; read its state before considering a replay."""
 
 
+class PostcardOutcomeUnknownError(MutationOutcomeUnknownError):
+    """Collection could not be confirmed; the caller must not automatically replay."""
+
+    def __init__(self, postcard_id: str, *, share_requested: bool) -> None:
+        """Retain lookup context without asserting the action failed or succeeded."""
+        self.postcard_id = postcard_id
+        self.share_requested = share_requested
+        super().__init__(
+            "Postcard collection outcome is unknown; "
+            "check the Bird Buddy app before retrying"
+        )
+
+
 class GraphqlError(Exception):
     """The GraphQL response contained one or more errors."""
 

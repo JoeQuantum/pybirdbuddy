@@ -22,6 +22,7 @@ from birdbuddy.exceptions import (
     MutationOutcomeUnknownError,
     NoFirmwareUpdateAvailableError,
     NoResponseError,
+    PostcardOutcomeUnknownError,
     SocialAuthenticationRequiredError,
     UnexpectedResponseError,
 )
@@ -35,7 +36,7 @@ from birdbuddy.feed import (
 )
 from birdbuddy.feeder import Feeder, FeederUpdateStatus, PowerProfile
 from birdbuddy.media import Collection, Media
-from birdbuddy.postcards import CollectedPostcard, PostcardAnalysis
+from birdbuddy.postcards import CollectedPostcard, CollectionReceipt, PostcardAnalysis
 from birdbuddy.queries.debug import DUMP_SCHEMA
 from birdbuddy.sightings import (
     PostcardSighting,
@@ -736,6 +737,9 @@ class BirdBuddy:
             TypeError: If ``postcard`` is neither a str nor a FeedNode.
         """
         if isinstance(postcard, str):
+            if not postcard:
+                msg = "A nonempty postcard ID is required"
+                raise ValueError(msg)
             return postcard
         if isinstance(postcard, FeedNode):
             if postcard.node_type != FeedNodeType.NewPostcard:
@@ -749,37 +753,27 @@ class BirdBuddy:
         self,
         postcard: str | FeedNode,
     ) -> PostcardAnalysis:
-        """Identify a postcard's visitor (the app's "Identify this visitor").
+        """Explicitly run inference and return the resulting new-postcard analysis.
 
-        Runs the AI inference (GraphQL ``inferenceExternalPostcardReanalyze``)
-        and returns the recognized species and media without collecting. Free
-        accounts analyze on demand (this call); premium accounts analyze
-        automatically, so this is then a no-op. Idempotent: an already-analyzed
-        postcard returns the same analysis, with reanalyzeAvailability
-        ALREADY_REANALYZED.
-
-        Args:
-            postcard: A postcard feed-item id, or a ``NewPostcard`` FeedNode.
-
-        Returns:
-            The postcard's ``PostcardAnalysis``: recognized species and media,
-            without collecting.
-
-        Raises:
-            ValueError: If ``postcard`` is a FeedNode that is not a
-                NewPostcard.
-            TypeError: If ``postcard`` is neither a str nor a FeedNode.
-            UnexpectedResponseError: If the response lacks the expected
-                reanalyze fields.
+        This is a mutation even when no collection occurs. Display refreshes use
+        get_feed_item instead. No claim of idempotence or automatic replay is
+        made when the server outcome is uncertain.
         """
+        postcard_id = self._postcard_id(postcard)
         result = await self._make_request(
             query=queries.birds.POSTCARD_REANALYZE,
-            variables={"feedItemId": self._postcard_id(postcard)},
+            variables={"feedItemId": postcard_id},
         )
         try:
             updated = result["inferenceExternalPostcardReanalyze"]["updatedFeedItem"]
         except (KeyError, TypeError) as err:
-            raise UnexpectedResponseError(result) from err
+            raise UnexpectedResponseError from err
+        if (
+            not isinstance(updated, dict)
+            or updated.get("id") != postcard_id
+            or updated.get("__typename") != "FeedItemNewPostcard"
+        ):
+            raise UnexpectedResponseError
         return PostcardAnalysis(updated)
 
     @deprecated("reanalyze_postcard is deprecated; use identify_postcard")
@@ -810,46 +804,108 @@ class BirdBuddy:
         )
         return result["inferenceExternalPostcardReanalyze"]
 
+    async def _reconcile_collection(
+        self,
+        postcard_id: str,
+        *,
+        share: bool,
+    ) -> CollectedPostcard:
+        """Confirm only an explicit collected read result; never guess from absence.
+
+        Collection can replace the feed item ID. If the original ID no longer
+        resolves, that is not proof of success or failure. Sharing is not
+        established by a read of the collected postcard.
+        """
+        try:
+            visit = await self.get_feed_item(postcard_id)
+        except (NoResponseError, UnexpectedResponseError, GraphqlError) as err:
+            raise PostcardOutcomeUnknownError(
+                postcard_id, share_requested=share
+            ) from err
+        if visit.kind != "FeedItemCollectedPostcard":
+            raise PostcardOutcomeUnknownError(postcard_id, share_requested=share)
+        return CollectedPostcard(
+            visit.raw,
+            receipt=CollectionReceipt(
+                postcard_id,
+                reconciled_by_read=True,
+                share_requested=share,
+            ),
+        )
+
+    @staticmethod
+    def _collected_result(
+        result: dict,
+        postcard_id: str,
+        *,
+        share: bool,
+    ) -> CollectedPostcard:
+        """Prefer the replacement envelope, retaining the first-collection flag."""
+        envelope = result.get("postcardCollect")
+        if not isinstance(envelope, dict):
+            raise UnexpectedResponseError
+        details = envelope.get("postcardCollectedDetails")
+        first = None
+        if isinstance(details, dict):
+            # Older selected captures requested only the boolean in details.
+            # An explicitly null replacement remains invalid, not a fallback.
+            collected = details.get(
+                "collectedPostcard", envelope.get("collectedPostcard")
+            )
+            first = details.get("isFirstCollectedPostcard")
+            if type(first) is not bool:
+                raise UnexpectedResponseError
+        elif details is None:
+            # Historical responses may still populate only the deprecated field.
+            collected = envelope.get("collectedPostcard")
+        else:
+            raise UnexpectedResponseError
+        if not isinstance(collected, dict):
+            raise UnexpectedResponseError
+        return CollectedPostcard(
+            collected,
+            receipt=CollectionReceipt(
+                postcard_id,
+                is_first_collected_postcard=first,
+                share_requested=share,
+            ),
+        )
+
     async def collect_postcard(
         self,
         postcard: str | FeedNode,
         *,
         share: bool = False,
+        identify: bool = False,
     ) -> CollectedPostcard:
-        """Collect a postcard into your account.
+        """Collect using the server's current selection; identify only if requested.
 
-        Identifies the postcard first (idempotent, so it is safe whether or
-        not inference has already run), then collects it with the species the
-        backend recognized.
-
-        Args:
-            postcard: A postcard feed-item id, or a ``NewPostcard`` FeedNode.
-            share: Whether to share the collected media.
-
-        Returns:
-            The collected postcard.
-
-        Raises:
-            ValueError: If ``postcard`` is a FeedNode that is not a
-                NewPostcard.
-            TypeError: If ``postcard`` is neither a str nor a FeedNode.
-            UnexpectedResponseError: If the response lacks the expected
-                collect fields.
+        ``share`` and ``identify`` are independent explicit booleans. Neither
+        numeric confidence nor legacy species policy is inferred here. A
+        transport or null-result uncertainty triggers one safe detail lookup,
+        never another collect mutation. The receipt distinguishes a returned
+        collection result from a result confirmed by reading current state.
         """
+        if type(share) is not bool or type(identify) is not bool:
+            msg = "share and identify must be booleans"
+            raise TypeError(msg)
         postcard_id = self._postcard_id(postcard)
-        await self.identify_postcard(postcard_id)
-        result = await self._make_request(
-            query=queries.birds.POSTCARD_COLLECT,
-            variables={
-                "feedItemId": postcard_id,
-                "postcardCollectInput": {"share": share},
-            },
-        )
+        if identify:
+            await self.identify_postcard(postcard_id)
         try:
-            collected = result["postcardCollect"]["collectedPostcard"]
-        except (KeyError, TypeError) as err:
-            raise UnexpectedResponseError(result) from err
-        return CollectedPostcard(collected)
+            result = await self._make_request(
+                query=queries.birds.POSTCARD_COLLECT,
+                variables={
+                    "feedItemId": postcard_id,
+                    "postcardCollectInput": {"share": share},
+                },
+            )
+            return self._collected_result(result, postcard_id, share=share)
+        except HttpResponseError:
+            # An explicit HTTP rejection (e.g. 429) is not an unknown outcome.
+            raise
+        except (NoResponseError, UnexpectedResponseError):
+            return await self._reconcile_collection(postcard_id, share=share)
 
     @deprecated("sighting_from_postcard is deprecated; use identify_postcard")
     async def sighting_from_postcard(

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections import UserDict
+from dataclasses import dataclass
 from typing import Any
 
 from birdbuddy.birds import Species
+from birdbuddy.exceptions import UnexpectedResponseError
 from birdbuddy.feeder import Feeder
 from birdbuddy.media import Media
 
@@ -16,12 +18,36 @@ _RECOGNIZED_SIGHTINGS = (
 )
 
 
+@dataclass(frozen=True)
+class CollectionReceipt:
+    """Separate the observed collection result from unverified sharing state."""
+
+    requested_postcard_id: str
+    is_first_collected_postcard: bool | None = None
+    reconciled_by_read: bool = False
+    share_requested: bool = False
+    # The current response selection provides no per-media sharing confirmation.
+    sharing_confirmed: bool | None = None
+
+
 class CollectedPostcard(UserDict[str, Any]):
     """A postcard collected into your account.
 
     Wraps the ``FeedItemCollectedPostcard`` returned by
     ``BirdBuddy.collect_postcard``.
     """
+
+    def __init__(self, data: dict, *, receipt: CollectionReceipt | None = None) -> None:
+        """Require an identified collected item; null cannot become empty success."""
+        if (
+            not isinstance(data, dict)
+            or not isinstance(data.get("id"), str)
+            or not data["id"]
+            or data.get("__typename") != "FeedItemCollectedPostcard"
+        ):
+            raise UnexpectedResponseError
+        super().__init__(data)
+        self.receipt = receipt
 
     @property
     def id(self) -> str:
