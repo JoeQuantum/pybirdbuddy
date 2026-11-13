@@ -1,4 +1,6 @@
-"""Queries related to the logged in user"""
+"""Queries related to the logged in user."""
+
+from birdbuddy.queries.visits import _VISIT_FRAGMENTS
 
 ME = """
 query me {
@@ -46,11 +48,11 @@ fragment ListMemberFeederFields on FeederForMember {
   locationCity
   locationCountry
   ownerName
-  housingType
-  version
   __typename
 }
 fragment ListFeederFields on FeederForPrivate {
+  housingType
+  version
   battery {
     charging
     percentage
@@ -83,10 +85,9 @@ fragment ListOwnerFeederFields on FeederForOwner {
   invitationsAvailable
   offGrid
   audioEnabled
+  supportsAudio
   powerProfile
   presenceUpdatedAt
-  housingType
-  version
   members {
     ...FeederMemberFields
     __typename
@@ -114,7 +115,8 @@ fragment FeederForMemberPendingFields on FeederForMemberPending {
 }
 """.strip()
 
-FEED = """
+FEED = (
+    """
 query meFeed($first: Int, $last: Int, $after: String, $before: String) {
   me {
     feed(first: $first, last: $last, after: $after, before: $before) {
@@ -141,6 +143,12 @@ fragment FeedConnectionFields on FeedConnection {
   __typename
 }
 fragment AnyFeedItemFields on AnyFeedItem {
+  ... on FeedItem {
+    ...VisitReadFields
+    id
+    createdAt
+    __typename
+  }
   ... on FeedItemFeederInvitationConfirmed {
     ...FeederInvitationConfirmedFields
     __typename
@@ -382,6 +390,8 @@ fragment NewPostcardFields on FeedItemNewPostcard {
   __typename
 }
 """.strip()
+    + _VISIT_FRAGMENTS
+)
 
 COLLECTIONS = """
 query meCollections {
@@ -429,6 +439,9 @@ fragment CollectionMainListFields on Collection {
 }
 fragment CollectionMediaFields on CollectionMedia {
   id
+  feeder {
+    id
+  }
   feederName
   liked
   likes
@@ -536,6 +549,9 @@ fragment CollectionMediaConnectionFields on CollectionMediaConnection {
 }
 fragment CollectionMediaFields on CollectionMedia {
   id
+  feeder {
+    id
+  }
   feederName
   liked
   likes

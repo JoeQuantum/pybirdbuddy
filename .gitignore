@@ -55,6 +55,8 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+junit.xml
+.ruff_cache/
 
 # Translations
 *.mo
@@ -141,3 +143,7 @@ schema-2023.json
 schema-new.graphql
 schema.graphql
 scratch_98_repro.py
+
+# Local account capture output is never source or a public fixture.
+*.dump.json
+*.sanitized.json

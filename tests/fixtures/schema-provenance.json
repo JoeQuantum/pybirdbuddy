@@ -1,0 +1,11 @@
+{
+  "endpoint": "https://graphql.app-api.prod.aws.mybirdbuddy.com/graphql",
+  "retrieved_at": "2026-11-13T19:09:10.132898+00:00",
+  "authenticated": false,
+  "request_type": "read-only GraphQL introspection",
+  "type_count": 568,
+  "sha256": "73ef0188e2c3161c9ad4b89debf4969335465f974b390912b5b15b55513a5f4a",
+  "source_catalog": "birdbuddy-api-catalog-2026-11-13/schema-live.json",
+  "source_response_sha256": "58e69fbefb1493d1210fecefd06484cda68aa6ce7bf873a24ef2fbc16d36c3d6",
+  "scope": "Schema shape only; no authenticated request or mutation performed for this reconciliation."
+}

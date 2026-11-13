@@ -1,0 +1,70 @@
+{
+  "__typename": "FeedItemNewPostcard",
+  "id": "fixture-id-004",
+  "createdAt": "2026-07-09T19:42:32.473Z",
+  "inferenceConfidenceLevel": "LOW_CONFIDENCE",
+  "inferenceExecutionMode": "MANUAL_COMPLETED",
+  "inferenceType": "ADVANCED",
+  "reanalyzeAvailability": "ALREADY_REANALYZED",
+  "feeder": {
+    "__typename": "FeederForOwner",
+    "id": "fixture-id-002",
+    "name": "Fixture name"
+  },
+  "medias": [
+    {
+      "__typename": "MediaImage",
+      "id": "fixture-id-005",
+      "createdAt": "2026-07-09T19:41:20.000Z",
+      "thumbnailUrl": "https://example.invalid/asset-001",
+      "contentUrl": "https://example.invalid/asset-001"
+    },
+    {
+      "__typename": "MediaImage",
+      "id": "fixture-id-006",
+      "createdAt": "2026-07-09T19:41:42.000Z",
+      "thumbnailUrl": "https://example.invalid/asset-001",
+      "contentUrl": "https://example.invalid/asset-001"
+    },
+    {
+      "__typename": "MediaImage",
+      "id": "fixture-id-007",
+      "createdAt": "2026-07-09T19:41:56.000Z",
+      "thumbnailUrl": "https://example.invalid/asset-001",
+      "contentUrl": "https://example.invalid/asset-001"
+    },
+    {
+      "__typename": "MediaImage",
+      "id": "fixture-id-008",
+      "createdAt": "2026-07-09T19:41:58.000Z",
+      "thumbnailUrl": "https://example.invalid/asset-001",
+      "contentUrl": "https://example.invalid/asset-001"
+    },
+    {
+      "__typename": "MediaImage",
+      "id": "fixture-id-009",
+      "createdAt": "2026-07-09T19:42:17.000Z",
+      "thumbnailUrl": "https://example.invalid/asset-001",
+      "contentUrl": "https://example.invalid/asset-001"
+    },
+    {
+      "__typename": "MediaVideo",
+      "id": "fixture-id-010",
+      "createdAt": "2026-07-09T19:41:21.000Z",
+      "thumbnailUrl": "https://example.invalid/asset-001",
+      "contentUrl": "https://example.invalid/asset-001"
+    }
+  ],
+  "sightingReportPreview": {
+    "sightings": [
+      {
+        "__typename": "SightingRecognizedBird",
+        "species": {
+          "__typename": "SpeciesBird",
+          "id": "fixture-id-011",
+          "name": "California Scrub-Jay"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "__typename": "FeedConnection",
+  "edges": [
+    {
+      "__typename": "FeedEdge",
+      "cursor": "cursor-future-visit",
+      "node": {
+        "__typename": "FeedItemFutureVisitor",
+        "id": "future-visit",
+        "createdAt": "2026-01-01T12:00:00.000Z"
+      }
+    }
+  ],
+  "pageInfo": {
+    "__typename": "PageInfo",
+    "hasNextPage": false,
+    "endCursor": null
+  }
+}

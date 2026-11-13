@@ -1,4 +1,4 @@
-"""Authentication queries"""
+"""Authentication queries."""
 
 SIGN_IN = """
 mutation emailSignIn($emailSignInInput: EmailSignInInput!) {
@@ -9,6 +9,10 @@ mutation emailSignIn($emailSignInInput: EmailSignInInput!) {
     }
     ... on Problem {
       ...ProblemFields
+      __typename
+    }
+    ... on AuthUseSocialProblem {
+      socialProviders
       __typename
     }
     __typename
@@ -68,12 +72,12 @@ fragment ListMemberFeederFields on FeederForMember {
   locationCity
   locationCountry
   ownerName
-  housingType
-  version
   __typename
 }
 
 fragment ListFeederFields on FeederForPrivate {
+  housingType
+  version
   battery {
     charging
     percentage
@@ -112,11 +116,10 @@ fragment ListOwnerFeederFields on FeederForOwner {
   invitationsAvailable
   offGrid
   audioEnabled
+  supportsAudio
   powerProfile
   presenceUpdatedAt
   serialNumber
-  housingType
-  version
   members {
     ...FeederMemberFields
     __typename
@@ -187,6 +190,11 @@ REFRESH_AUTH_TOKEN = """
 mutation authRefreshToken($refreshTokenInput: RefreshTokenInput!) {
   authRefreshToken(refreshTokenInput: $refreshTokenInput) {
     ...AuthFields
+    me {
+      user {
+        id
+      }
+    }
     __typename
   }
 }

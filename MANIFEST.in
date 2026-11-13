@@ -1,0 +1,7 @@
+include RECONCILIATION.md
+include Makefile
+include pyrightconfig.json
+include .markdownlint.yaml
+include .env.example
+recursive-include tests *.py *.json
+recursive-include scripts *.py

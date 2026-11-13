@@ -1,0 +1,233 @@
+{
+  "__typename": "FeedConnection",
+  "edges": [
+    {
+      "__typename": "FeedEdge",
+      "cursor": "cursor-visit-a",
+      "node": {
+        "__typename": "FeedItemSpeciesSighting",
+        "id": "visit-a",
+        "createdAt": "2026-01-01T12:00:00.000Z",
+        "media": {
+          "__typename": "MediaImage",
+          "id": "image-a",
+          "createdAt": "2026-01-01T12:00:00.000Z",
+          "thumbnailUrl": "https://example.invalid/feeder-a/image-a.jpg?Expires=4102444800",
+          "contentUrl": "https://example.invalid/feeder-a/image-a.jpg?Expires=4102444800"
+        },
+        "collection": {
+          "__typename": "CollectionBird",
+          "id": "collection-feeder-a",
+          "species": {
+            "__typename": "SpeciesBird",
+            "id": "species-cardinal",
+            "name": "Northern Cardinal",
+            "iconUrl": "https://example.invalid/species/species-cardinal"
+          },
+          "coverCollectionMedia": {
+            "__typename": "CollectionMedia",
+            "id": "cover-feeder-a",
+            "feeder": {
+              "__typename": "FeederForOwner",
+              "id": "feeder-a",
+              "name": "Fixture Feeder feeder-a"
+            },
+            "media": {
+              "__typename": "MediaImage",
+              "id": "image-a",
+              "createdAt": "2026-01-01T12:00:00.000Z",
+              "thumbnailUrl": "https://example.invalid/feeder-a/image-a.jpg?Expires=4102444800",
+              "contentUrl": "https://example.invalid/feeder-a/image-a.jpg?Expires=4102444800"
+            }
+          }
+        }
+      }
+    },
+    {
+      "__typename": "FeedEdge",
+      "cursor": "cursor-visit-b",
+      "node": {
+        "__typename": "FeedItemSpeciesUnlocked",
+        "id": "visit-b",
+        "createdAt": "2026-01-01T12:00:00.000Z",
+        "media": {
+          "__typename": "MediaImage",
+          "id": "image-other-feeder",
+          "createdAt": "2026-01-01T12:00:00.000Z",
+          "thumbnailUrl": "https://example.invalid/feeder-b/image-other-feeder.jpg?Expires=4102444800",
+          "contentUrl": "https://example.invalid/feeder-b/image-other-feeder.jpg?Expires=4102444800"
+        },
+        "collection": {
+          "__typename": "CollectionBird",
+          "id": "collection-feeder-b",
+          "species": {
+            "__typename": "SpeciesBird",
+            "id": "species-cardinal",
+            "name": "Northern Cardinal",
+            "iconUrl": "https://example.invalid/species/species-cardinal"
+          },
+          "coverCollectionMedia": {
+            "__typename": "CollectionMedia",
+            "id": "cover-feeder-b",
+            "feeder": {
+              "__typename": "FeederForOwner",
+              "id": "feeder-b",
+              "name": "Fixture Feeder feeder-b"
+            },
+            "media": {
+              "__typename": "MediaImage",
+              "id": "image-other-feeder",
+              "createdAt": "2026-01-01T12:00:00.000Z",
+              "thumbnailUrl": "https://example.invalid/feeder-b/image-other-feeder.jpg?Expires=4102444800",
+              "contentUrl": "https://example.invalid/feeder-b/image-other-feeder.jpg?Expires=4102444800"
+            }
+          }
+        }
+      }
+    },
+    {
+      "__typename": "FeedEdge",
+      "cursor": "cursor-mystery-a",
+      "node": {
+        "__typename": "FeedItemMysteryVisitorNotRecognized",
+        "id": "mystery-a",
+        "createdAt": "2026-01-01T12:00:00.000Z",
+        "media": {
+          "__typename": "MediaImage",
+          "id": "image-b",
+          "createdAt": "2026-01-01T12:00:00.000Z",
+          "thumbnailUrl": "https://example.invalid/feeder-a/image-b.jpg?Expires=4102444800",
+          "contentUrl": "https://example.invalid/feeder-a/image-b.jpg?Expires=4102444800"
+        }
+      }
+    },
+    {
+      "__typename": "FeedEdge",
+      "cursor": "cursor-mystery-null",
+      "node": {
+        "__typename": "FeedItemMysteryVisitorResolved",
+        "id": "mystery-null",
+        "createdAt": "2026-01-01T12:00:00.000Z",
+        "media": null
+      }
+    },
+    {
+      "__typename": "FeedEdge",
+      "cursor": "cursor-postcard-collected",
+      "node": {
+        "__typename": "FeedItemCollectedPostcard",
+        "id": "postcard-collected",
+        "createdAt": "2026-01-01T12:00:00.000Z",
+        "feeder": {
+          "__typename": "FeederForOwner",
+          "id": "feeder-a",
+          "name": "Fixture Feeder feeder-a"
+        },
+        "species": [
+          {
+            "__typename": "SpeciesBird",
+            "id": "species-cardinal",
+            "name": "Northern Cardinal",
+            "iconUrl": "https://example.invalid/species/species-cardinal"
+          },
+          {
+            "__typename": "SpeciesBird",
+            "id": "species-jay",
+            "name": "Blue Jay",
+            "iconUrl": "https://example.invalid/species/species-jay"
+          }
+        ],
+        "medias": [
+          {
+            "__typename": "MediaImage",
+            "id": "image-a",
+            "createdAt": "2026-01-01T12:00:00.000Z",
+            "thumbnailUrl": "https://example.invalid/feeder-a/image-a.jpg?Expires=4102444800",
+            "contentUrl": "https://example.invalid/feeder-a/image-a.jpg?Expires=4102444800"
+          },
+          {
+            "__typename": "MediaImage",
+            "id": "image-b",
+            "createdAt": "2026-01-01T12:00:00.000Z",
+            "thumbnailUrl": "https://example.invalid/feeder-a/image-b.jpg?Expires=4102444800",
+            "contentUrl": "https://example.invalid/feeder-a/image-b.jpg?Expires=4102444800"
+          },
+          {
+            "__typename": "MediaVideo",
+            "id": "video-a",
+            "createdAt": "2026-01-01T12:00:00.000Z",
+            "thumbnailUrl": "https://example.invalid/feeder-a/video-a.jpg?Expires=4102444800",
+            "contentUrl": "https://example.invalid/feeder-a/video-a.mp4?Expires=4102444800"
+          }
+        ],
+        "hasNewSpecies": true,
+        "hasMysteryVisitor": false,
+        "inferenceExecutionMode": "MANUAL_COMPLETED",
+        "inferenceType": "ADVANCED",
+        "mediaSpeciesAssignedName": null
+      }
+    },
+    {
+      "__typename": "FeedEdge",
+      "cursor": "cursor-postcard-new",
+      "node": {
+        "__typename": "FeedItemNewPostcard",
+        "id": "postcard-new",
+        "createdAt": "2026-01-01T12:00:00.000Z",
+        "feeder": {
+          "__typename": "FeederForOwner",
+          "id": "feeder-a",
+          "name": "Fixture Feeder feeder-a"
+        },
+        "inferenceExecutionMode": "MANUAL_COMPLETED",
+        "inferenceType": "ADVANCED",
+        "inferenceConfidenceLevel": "HIGH_CONFIDENCE",
+        "reanalyzeAvailability": "ALREADY_RAN",
+        "hasVideoMedia": true,
+        "mediaImageCount": 2,
+        "medias": [
+          {
+            "__typename": "MediaImage",
+            "id": "image-a",
+            "createdAt": "2026-01-01T12:00:00.000Z",
+            "thumbnailUrl": "https://example.invalid/feeder-a/image-a.jpg?Expires=4102444800",
+            "contentUrl": "https://example.invalid/feeder-a/image-a.jpg?Expires=4102444800"
+          },
+          {
+            "__typename": "MediaImage",
+            "id": "image-b",
+            "createdAt": "2026-01-01T12:00:00.000Z",
+            "thumbnailUrl": "https://example.invalid/feeder-a/image-b.jpg?Expires=4102444800",
+            "contentUrl": "https://example.invalid/feeder-a/image-b.jpg?Expires=4102444800"
+          },
+          {
+            "__typename": "MediaVideo",
+            "id": "video-a",
+            "createdAt": "2026-01-01T12:00:00.000Z",
+            "thumbnailUrl": "https://example.invalid/feeder-a/video-a.jpg?Expires=4102444800",
+            "contentUrl": "https://example.invalid/feeder-a/video-a.mp4?Expires=4102444800"
+          }
+        ],
+        "sightingReportPreview": {
+          "__typename": "SightingReportPreview",
+          "sightings": [
+            {
+              "__typename": "SightingRecognizedBird",
+              "species": {
+                "__typename": "SpeciesBird",
+                "id": "species-cardinal",
+                "name": "Northern Cardinal",
+                "iconUrl": "https://example.invalid/species/species-cardinal"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "pageInfo": {
+    "__typename": "PageInfo",
+    "hasNextPage": false,
+    "endCursor": null
+  }
+}

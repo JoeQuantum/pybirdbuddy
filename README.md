@@ -1,5 +1,9 @@
 # pybirdbuddy
 
+This fork is preparing a reconciled client candidate. See
+[the reconciliation notes](RECONCILIATION.md) for preserved behavior,
+upstream changes, packaging and validation commands.
+
 ```python
 import asyncio
 import pprint
@@ -19,12 +23,13 @@ pprint.pprint(result)
 pprint.pprint(bb.feeders)
 ```
 
-Note: only password login is supported currently. Google and other SSOs are not supported. If
-you've already set up your Bird Buddy with SSO, one option could be to register a new account with
-a password, and then redeem an invite code to your Bird Buddy under the new account. Some fields
-will be missing (such as firmware versions and off-grid status).
+Note: only password login is supported currently. Google and other SSOs are not
+supported. If you've already set up your Bird Buddy with SSO, one option could be
+to register a new account with a password, and then redeem an invite code to your
+Bird Buddy under the new account. Some fields will be missing (such as firmware
+versions and off-grid status).
 
-The `feeders` property will be an array of feeders with the following fields:
+The `feeders` property is a dictionary keyed by feeder ID, with these fields:
 
 ```graphql
 fragment ListFeederFields on FeederForPrivate {
@@ -51,16 +56,17 @@ fragment ListFeederFields on FeederForPrivate {
 
 ## Translations
 
-API responses can return translated strings by setting the client's `language_code` property.
+API responses can return translated strings by setting the client's
+`language_code` property.
 Language codes are parsed using [`langcodes`](https://pypi.org/project/langcodes/)
 
 ```python
-from birdbuddy import BirdBuddy
+from birdbuddy.client import BirdBuddy
 
 async def main():
-    bb = BirdBuddy
+    bb = BirdBuddy("user@email.com", "Pa$$w0rd")
     bb.language_code = "de"
-    
+
     collections = await bb.refresh_collections()
     birds = [c.species.name for c in collections.values()]
     print(birds)

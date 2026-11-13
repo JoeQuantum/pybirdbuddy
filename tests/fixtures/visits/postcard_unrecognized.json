@@ -1,0 +1,43 @@
+{
+  "__typename": "FeedItemNewPostcard",
+  "id": "postcard-unrecognized",
+  "createdAt": "2026-01-01T12:00:00.000Z",
+  "feeder": {
+    "__typename": "FeederForOwner",
+    "id": "feeder-a",
+    "name": "Fixture Feeder feeder-a"
+  },
+  "inferenceExecutionMode": "MANUAL_COMPLETED",
+  "inferenceType": "ADVANCED",
+  "inferenceConfidenceLevel": "HIGH_CONFIDENCE",
+  "reanalyzeAvailability": "ALREADY_RAN",
+  "hasVideoMedia": true,
+  "mediaImageCount": 2,
+  "medias": [
+    {
+      "__typename": "MediaImage",
+      "id": "image-a",
+      "createdAt": "2026-01-01T12:00:00.000Z",
+      "thumbnailUrl": "https://example.invalid/feeder-a/image-a.jpg?Expires=4102444800",
+      "contentUrl": "https://example.invalid/feeder-a/image-a.jpg?Expires=4102444800"
+    },
+    {
+      "__typename": "MediaImage",
+      "id": "image-b",
+      "createdAt": "2026-01-01T12:00:00.000Z",
+      "thumbnailUrl": "https://example.invalid/feeder-a/image-b.jpg?Expires=4102444800",
+      "contentUrl": "https://example.invalid/feeder-a/image-b.jpg?Expires=4102444800"
+    },
+    {
+      "__typename": "MediaVideo",
+      "id": "video-a",
+      "createdAt": "2026-01-01T12:00:00.000Z",
+      "thumbnailUrl": "https://example.invalid/feeder-a/video-a.jpg?Expires=4102444800",
+      "contentUrl": "https://example.invalid/feeder-a/video-a.mp4?Expires=4102444800"
+    }
+  ],
+  "sightingReportPreview": {
+    "__typename": "SightingReportPreview",
+    "sightings": []
+  }
+}
