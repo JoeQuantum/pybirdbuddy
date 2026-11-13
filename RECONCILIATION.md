@@ -43,6 +43,20 @@ The snapshot is imported from the previously reviewed API catalog; this work did
 not make a live API request. Query validation proves structural compatibility,
 not account authorization, resolver success or tested hardware support.
 
+The optional `scripts/dump_payloads.py` helper captures account reads by default.
+Authentication exchanges tokens, but it does not identify or collect a postcard
+unless the corresponding `--identify-postcard-id ID` or
+`--collect-postcard-id ID` flag is supplied. Each mutation uses the exact supplied
+ID; collection does not implicitly identify or share. Old mutation environment
+variables are not used. This reconciliation did not run the helper on an account.
+
+Only allowlisted sanitized data is written by default. Unknown fields, locations
+and raw server errors are omitted; report/auth tokens are replaced wholesale.
+Identifiers are remapped, names are private except on immediate species objects,
+URLs become nonfunctional examples and dates become fixed synthetic timestamps.
+Review captures before turning them into fixtures. `--raw-output PATH` explicitly
+creates a separate private file with mode 0600 and refuses existing files.
+
 ## Packaging and checks
 
 Package metadata and dependencies live in `pyproject.toml`; the old
