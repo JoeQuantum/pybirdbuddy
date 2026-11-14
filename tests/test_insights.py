@@ -346,8 +346,9 @@ async def test_report_result_cannot_cross_account_or_selected_feeder(
         await AccountInsights(account).feeder_report(feeder_id="feeder-owner")
 
 
+@pytest.mark.parametrize("intraday", [False, True])
 async def test_report_range_error_is_not_cached_or_replaced_by_another_period(
-    bbclient, graphql_mock, payloads
+    bbclient, graphql_mock, payloads, intraday
 ):
     """Real transport errors leave other ranges usable and permit later recovery."""
     bbclient._save_me(
@@ -359,6 +360,15 @@ async def test_report_range_error_is_not_cached_or_replaced_by_another_period(
     bbclient.bind_account("account-a")
     good = {"start": STAMP - timedelta(days=31), "end": STAMP}
     bad = {"start": STAMP - timedelta(days=62), "end": good["start"]}
+    if intraday:
+        good = {
+            "start": datetime.fromisoformat("2034-06-02T05:15:00.123456+02:00"),
+            "end": datetime.fromisoformat("2034-06-02T06:45:59.999000+02:00"),
+        }
+        bad = {
+            "start": good["end"] - timedelta(minutes=2),
+            "end": good["end"] - timedelta(minutes=1),
+        }
     failing = True
 
     async def execute(*, query, variables, headers):
@@ -418,6 +428,46 @@ async def test_report_range_error_is_not_cached_or_replaced_by_another_period(
             == recovered
         )
         assert graphql_mock.await_count == 4
+    finally:
+        await adapter.async_close()
+
+
+@pytest.mark.parametrize("offset", [timezone.utc, timezone(timedelta(hours=-7))])
+async def test_report_preserves_exact_range_and_summary_hour_without_redating(
+    account, payloads, offset
+):
+    """A summary-hour date is independent of the report and fetch timestamps."""
+    start = datetime(2034, 6, 2, 3, 15, 0, 123456, timezone.utc).astimezone(offset)
+    end = start + timedelta(minutes=90, microseconds=875544)
+    fetched = datetime(2034, 7, 10, tzinfo=timezone.utc)
+    summary_hour = "2034-07-10T09:00:00Z"
+    report = payloads["FEEDER_REPORT"]["userFeederReport"]
+    report["reportPeriod"] = {
+        "startDate": start.astimezone(timezone.utc).isoformat(),
+        "endDate": end.astimezone(timezone.utc).isoformat(),
+    }
+    report["visitAggregateMetrics"]["busiestHourOfDay"] = summary_hour
+    adapter = AccountInsights(account, now=lambda: fetched)
+    try:
+        result = await adapter.feeder_report(
+            feeder_id="feeder-owner", start=start, end=end
+        )
+        account._make_request.assert_awaited_once_with(
+            query=queries.FEEDER_REPORT,
+            variables={
+                "userId": "account-a",
+                "feederId": "feeder-owner",
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+            },
+        )
+        assert result["status"] == "available"
+        assert result["complete"] is True
+        assert result["data"]["reportPeriod"] == report["reportPeriod"]
+        assert (
+            result["data"]["visitAggregateMetrics"]["busiestHourOfDay"] == summary_hour
+        )
+        assert result["fetched_at"] == fetched.isoformat()
     finally:
         await adapter.async_close()
 

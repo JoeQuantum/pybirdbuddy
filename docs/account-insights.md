@@ -76,6 +76,22 @@ automatic fallback to another range. The failure is not cached and does not
 invalidate successful reports for other ranges. A later explicit read can
 recover if the vendor returns data; a report error alone does not refresh tokens.
 
+The adapter preserves explicit instants, UTC offsets and fractional seconds; it
+does not round requests to whole days or widen a failing range. A short interval
+can fail while a wider report for the same day remains usable in its own cache
+entry. Equivalent offset encodings describe the same instants. Vendor boundary
+inclusion, minimum supported duration and exact filtering precision remain
+unverified; an echoed period alone does not establish them. Empty aggregation
+is a possible explanation for some errors, not a documented zero-count contract.
+
+`visitAggregateMetrics.busiestHourOfDay` is preserved as vendor summary metadata.
+Its `DateTime` date can fall outside `reportPeriod`; it is not an actual visit or
+last-seen timestamp. Do not replace its date, derive freshness from it, or treat
+it as evidence of a future visit. Keep it separate from the vendor's period and
+the adapter's `fetched_at`. Date anchoring and timezone semantics are not
+guaranteed, and the related per-species `peakHour` field has not been independently
+verified. Projection completeness does not validate these temporal semantics.
+
 Remote connections always carry `entity_scope: remote_connection`. They are not
 owned physical devices and do not enter the client’s feeder registry. The
 `expired` value is recomputed when a cached result is consumed; null or malformed
