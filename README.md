@@ -54,6 +54,15 @@ fragment ListFeederFields on FeederForPrivate {
 }
 ```
 
+## Optional account insights
+
+The separate `AccountInsights` adapter provides eight explicit read-only queries:
+hardware, preferences, species, named birds, weekly recap, yearly review, feeder
+reports and remote connection metadata. Construction performs no request; reads
+use bounded account/language-scoped caches and never add background polling or
+mutations. See [the account-insights contract](docs/account-insights.md) for
+examples, selected fields, resource limits and fixture-validation limitations.
+
 ## Translations
 
 API responses can return translated strings by setting the client's

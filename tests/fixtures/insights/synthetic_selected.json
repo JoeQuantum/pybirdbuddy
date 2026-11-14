@@ -1,0 +1,350 @@
+{
+  "HARDWARE": {
+    "me": {
+      "user": {
+        "id": "account-a"
+      },
+      "featureLocks": [
+        {
+          "feature": "LIVESTREAM"
+        }
+      ],
+      "subscriptionPremium": null,
+      "feeders": [
+        {
+          "__typename": "FeederForOwner",
+          "id": "feeder-owner",
+          "name": "Home",
+          "version": "V2_NOOK",
+          "housingType": "CLASSIC",
+          "mountingType": "HANGER",
+          "solarRoof": "YES",
+          "supportsAudio": true,
+          "supportsEnhancedLivestream": false,
+          "supportsLivestreamSnapshot": "SUPPORTED",
+          "supportsWebRTC": true,
+          "powerProfile": "FRENZY_MODE",
+          "smartEnergy": {
+            "__typename": "FeederSmartEnergyEnabled",
+            "status": "ENABLED",
+            "state": "SAVING",
+            "runningPowerProfile": "POWER_SAVER_MODE"
+          },
+          "videoQuality": "K_2",
+          "cameraFieldOfView": "WIDE"
+        },
+        {
+          "__typename": "FeederForMember",
+          "id": "feeder-member",
+          "name": "Shared",
+          "version": "V2_NOOK",
+          "housingType": "CLASSIC",
+          "mountingType": "HANGER",
+          "solarRoof": "YES",
+          "supportsAudio": true,
+          "supportsEnhancedLivestream": false,
+          "supportsLivestreamSnapshot": "SUPPORTED",
+          "supportsWebRTC": true,
+          "livestreamAccessStatus": null
+        },
+        {
+          "__typename": "FeederForMemberPending",
+          "id": "feeder-pending",
+          "name": "Invitation"
+        }
+      ]
+    }
+  },
+  "PREFERENCES": {
+    "me": {
+      "user": {
+        "id": "account-a"
+      },
+      "postcardSettings": {
+        "ignoreMysteryVisitors": false,
+        "ignoredSpecies": [
+          {
+            "__typename": "SpeciesBird",
+            "id": "species-cardinal",
+            "name": "Northern Cardinal",
+            "scientificName": "Cardinalis cardinalis",
+            "iconUrl": "https://example.invalid/cardinal"
+          }
+        ]
+      }
+    }
+  },
+  "SPECIES": {
+    "me": {
+      "user": {
+        "id": "account-a"
+      }
+    },
+    "species": {
+      "__typename": "SpeciesBird",
+      "id": "species-cardinal",
+      "name": "Northern Cardinal",
+      "scientificName": "Cardinalis cardinalis",
+      "iconUrl": "https://example.invalid/cardinal",
+      "alternativeName": null,
+      "isUnofficialName": false
+    }
+  },
+  "NAMED_BIRDS": {
+    "me": {
+      "user": {
+        "id": "account-a"
+      },
+      "mediaSpeciesNames": [
+        {
+          "id": "individual-a",
+          "name": "Ruby",
+          "createdAt": "2026-10-01T12:00:00Z",
+          "state": "ACTIVE",
+          "personalityBadge": null,
+          "relationshipLevel": "VISITOR",
+          "species": {
+            "__typename": "SpeciesBird",
+            "id": "species-cardinal",
+            "name": "Northern Cardinal",
+            "scientificName": "Cardinalis cardinalis",
+            "iconUrl": "https://example.invalid/cardinal"
+          },
+          "stats": {
+            "firstSeenAt": "2026-10-01T12:00:00Z",
+            "lastSeenAt": "2026-11-01T12:00:00Z",
+            "visitCount": 12,
+            "usualTimeOfDay": "MORNING"
+          },
+          "previewMedia": [
+            {
+              "__typename": "MediaImage",
+              "id": "sample-image",
+              "createdAt": "2026-11-01T12:00:00Z",
+              "thumbnailUrl": "https://example.invalid/sample.jpg"
+            }
+          ]
+        },
+        {
+          "id": "individual-b",
+          "name": "Ruby",
+          "createdAt": "2026-10-01T12:00:00Z",
+          "state": "STOPPED",
+          "personalityBadge": null,
+          "relationshipLevel": "VISITOR",
+          "species": {
+            "__typename": "SpeciesBird",
+            "id": "species-cardinal",
+            "name": "Northern Cardinal",
+            "scientificName": "Cardinalis cardinalis",
+            "iconUrl": "https://example.invalid/cardinal"
+          },
+          "stats": null,
+          "previewMedia": []
+        }
+      ]
+    }
+  },
+  "WEEKLY": {
+    "me": {
+      "user": {
+        "id": "account-a"
+      }
+    },
+    "weeklyRecapForUser": {
+      "__typename": "WeeklyRecapForUserSuccess",
+      "data": {
+        "isoWeek": "2026-W44",
+        "year": 2026,
+        "generalVisitStats": {
+          "totalVisits": 24,
+          "previousWeekTotalVisits": 17,
+          "totalObservationTimeMinutes": 36,
+          "dailyVisits": [
+            {
+              "date": "2026-10-26T00:00:00Z",
+              "visitCount": 3
+            }
+          ]
+        },
+        "feederVisitStats": {
+          "feeders": [
+            {
+              "feeder": {
+                "id": "feeder-owner",
+                "name": "Home"
+              },
+              "visitCount": 24
+            }
+          ]
+        },
+        "speciesVisitStats": {
+          "distinctSpeciesCount": 1,
+          "mysteryVisitorVisitCount": 2,
+          "mysteryVisitor": {
+            "medias": []
+          },
+          "distinctSpecies": [
+            {
+              "species": {
+                "__typename": "SpeciesBird",
+                "id": "species-cardinal",
+                "name": "Northern Cardinal",
+                "scientificName": "Cardinalis cardinalis",
+                "iconUrl": "https://example.invalid/cardinal"
+              },
+              "visitCount": 22,
+              "medias": []
+            }
+          ]
+        },
+        "milestoneStats": {
+          "currentStreakWeeks": 3,
+          "lifetimeTotalVisits": 101,
+          "streakActiveDays": 12
+        }
+      }
+    }
+  },
+  "YEARLY": {
+    "me": {
+      "user": {
+        "id": "account-a"
+      }
+    },
+    "yearInReviewForUser": {
+      "__typename": "YearInReviewForUserSuccess",
+      "data": {
+        "year": 2026,
+        "generalVisitStats": {
+          "totalVisits": 100,
+          "totalVisitsPercentile": 75,
+          "hasFeederHousingTypeClassicVisits": true
+        },
+        "dailyVisitStats": {
+          "topDays": [
+            {
+              "date": "2026-10-26T00:00:00Z",
+              "visitCount": 8
+            }
+          ]
+        },
+        "monthlyVisitStats": {
+          "monthlyVisits": [
+            {
+              "month": "JANUARY",
+              "visitCount": 0
+            }
+          ]
+        },
+        "speciesVisitStats": {
+          "distinctSpeciesPercentile": 80,
+          "distinctSpecies": [
+            {
+              "species": {
+                "__typename": "SpeciesBird",
+                "id": "species-cardinal",
+                "name": "Northern Cardinal",
+                "scientificName": "Cardinalis cardinalis",
+                "iconUrl": "https://example.invalid/cardinal"
+              },
+              "visitCount": 90,
+              "medias": [
+                {
+                  "__typename": "MediaImage",
+                  "id": "sample-image",
+                  "createdAt": "2026-11-01T12:00:00Z",
+                  "thumbnailUrl": "https://example.invalid/sample.jpg"
+                }
+              ]
+            }
+          ]
+        },
+        "namedBirdVisitStats": {
+          "namedBirds": [
+            {
+              "identificationCount": 12,
+              "namedBird": {
+                "id": "individual-a",
+                "name": "Ruby",
+                "createdAt": "2026-10-01T12:00:00Z",
+                "state": "ACTIVE",
+                "personalityBadge": null,
+                "relationshipLevel": "VISITOR",
+                "species": {
+                  "__typename": "SpeciesBird",
+                  "id": "species-cardinal",
+                  "name": "Northern Cardinal",
+                  "scientificName": "Cardinalis cardinalis",
+                  "iconUrl": "https://example.invalid/cardinal"
+                },
+                "stats": {
+                  "firstSeenAt": "2026-10-01T12:00:00Z",
+                  "lastSeenAt": "2026-11-01T12:00:00Z",
+                  "visitCount": 12,
+                  "usualTimeOfDay": "MORNING"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "FEEDER_REPORT": {
+    "me": {
+      "user": {
+        "id": "account-a"
+      }
+    },
+    "userFeederReport": {
+      "userId": "account-a",
+      "feederIds": [
+        "feeder-owner"
+      ],
+      "reportLabel": "Vendor selected period",
+      "reportPeriod": {
+        "startDate": "2026-10-01T00:00:00Z",
+        "endDate": "2026-11-01T00:00:00Z"
+      },
+      "visitAggregateMetrics": {
+        "busiestHourOfDay": "2026-10-01T12:00:00Z",
+        "numberOfUniqueSpecies": 1,
+        "totalNumberOfVisits": 24,
+        "speciesVisitSummaries": [
+          {
+            "speciesId": "species-cardinal",
+            "speciesLabel": "Northern Cardinal",
+            "numberOfVisits": 24,
+            "peakHour": "2026-10-01T12:00:00Z"
+          }
+        ]
+      }
+    }
+  },
+  "REMOTE_CONNECTIONS": {
+    "me": {
+      "user": {
+        "id": "account-a"
+      },
+      "remoteFeederConnections": [
+        {
+          "id": "connection-a",
+          "createdAt": "2026-11-01T00:00:00Z",
+          "expiresAt": "2026-11-01T00:02:00Z",
+          "slotNumber": 1,
+          "feederName": "Explore sample",
+          "remoteFeeder": {
+            "id": "remote-a",
+            "feederName": "Explore sample",
+            "title": "Sample sanctuary",
+            "tier": "FREE",
+            "type": "CLASSIC",
+            "isUnlocked": true,
+            "isUserConnected": true
+          }
+        }
+      ]
+    }
+  }
+}
