@@ -47,6 +47,12 @@ from the configured `powerProfile`, and the adapter never substitutes one for th
 other when a value is unavailable. Selected owner video quality and camera field
 of view are reported settings only; this does not enable their controls.
 
+`supportsLivestreamSnapshot` is a `FeederCapabilitySupport` enum, not a Boolean.
+Its known values are `SUPPORTED`, `UNAVAILABLE`, and `REQUIRES_FIRMWARE_UPDATE`.
+Do not use string truthiness to enable a capability. The adapter preserves these
+strings and unknown future values; only an explicit supported value establishes
+the reported capability. Reading it does not start a snapshot or camera session.
+
 Named birds are individuals, not species totals. `STOPPED` stays stopped, even
 when historical statistics exist. Null/missing statistics remain null; no zero
 visit count, recent recognition, or new assignment is inferred. Names need not be
@@ -61,6 +67,14 @@ accept `start` and `end`: locally, both must be aware datetimes with a positive
 range of at most 366 days. This is a client resource limit, not a vendor retention
 promise. The returned `reportPeriod`, `isoWeek`, or `year` is authoritative. Null
 media lists or empty sample-media lists are not evidence of zero visits.
+
+With no explicit range, the vendor selects the reporting period; callers must
+not assume it is rolling or lifetime analytics. An `INTERNAL_SERVER_ERROR` for
+one feeder or range does not identify an empty period, battery condition, or
+retention limit. It remains a `GraphqlError`, without fabricated counts or an
+automatic fallback to another range. The failure is not cached and does not
+invalidate successful reports for other ranges. A later explicit read can
+recover if the vendor returns data; a report error alone does not refresh tokens.
 
 Remote connections always carry `entity_scope: remote_connection`. They are not
 owned physical devices and do not enter the client’s feeder registry. The
@@ -118,6 +132,7 @@ on 2026-11-13. Tests use explicitly synthetic fixtures with provenance in
 `tests/fixtures/insights/provenance.json`; deliberately malformed/null cases test
 safe partial-data handling. These tests do not prove current account access,
 hardware behavior, premium eligibility, data retention, or availability on an
-actual feeder. No authenticated live account read or mutation was performed to
-implement this adapter. Home Assistant response-service wiring and any optional
-UI remain a separate integration step.
+actual feeder. Live account evidence is tracked separately from this offline
+suite and must retain its account, operation and time limitations. Standalone
+SDK reads do not validate Home Assistant installation, service wiring, lifecycle
+or physical device controls; those require separate integration checks.

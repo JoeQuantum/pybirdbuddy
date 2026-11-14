@@ -282,6 +282,21 @@ async def test_weekly_yearly_periods_counts_and_empty_media_are_vendor_scoped(ac
     assert yearly["complete"]
 
 
+@pytest.mark.parametrize(
+    "support", ["SUPPORTED", "UNAVAILABLE", "REQUIRES_FIRMWARE_UPDATE", "FUTURE_VALUE"]
+)
+async def test_snapshot_support_is_preserved_as_an_enum(account, payloads, support):
+    """A nonempty unsupported capability string must not become Boolean true."""
+    for feeder in payloads["HARDWARE"]["me"]["feeders"][:2]:
+        feeder["supportsLivestreamSnapshot"] = support
+    result = await AccountInsights(account).hardware()
+    owner, member, pending = result["data"]["feeders"]
+    assert owner["supportsLivestreamSnapshot"] == support
+    assert member["supportsLivestreamSnapshot"] == support
+    assert "supportsLivestreamSnapshot" not in pending
+    account._make_request.assert_awaited_once_with(query=queries.HARDWARE, variables={})
+
+
 async def test_optional_report_range_only_uses_schema_arguments_and_current_account(
     account,
 ):
@@ -329,6 +344,82 @@ async def test_report_result_cannot_cross_account_or_selected_feeder(
     payloads["FEEDER_REPORT"]["userFeederReport"][field] = value
     with pytest.raises(InsightAccountError):
         await AccountInsights(account).feeder_report(feeder_id="feeder-owner")
+
+
+async def test_report_range_error_is_not_cached_or_replaced_by_another_period(
+    bbclient, graphql_mock, payloads
+):
+    """Real transport errors leave other ranges usable and permit later recovery."""
+    bbclient._save_me(
+        {
+            "user": {"id": "account-a"},
+            "feeders": [{"id": "feeder-owner", "__typename": "FeederForOwner"}],
+        }
+    )
+    bbclient.bind_account("account-a")
+    good = {"start": STAMP - timedelta(days=31), "end": STAMP}
+    bad = {"start": STAMP - timedelta(days=62), "end": good["start"]}
+    failing = True
+
+    async def execute(*, query, variables, headers):
+        assert query == queries.FEEDER_REPORT  # No fallback, mutation or token refresh.
+        assert variables["userId"] == "account-a"
+        assert variables["feederId"] == "feeder-owner"
+        if failing and variables.get("start") == bad["start"].isoformat():
+            return {
+                "errors": [
+                    {
+                        "message": "synthetic-private-server-detail",
+                        "path": ["userFeederReport"],
+                        "extensions": {"code": "INTERNAL_SERVER_ERROR"},
+                    }
+                ]
+            }
+        response = deepcopy(payloads["FEEDER_REPORT"])
+        response["userFeederReport"]["reportPeriod"] = {
+            "startDate": variables["start"],
+            "endDate": variables["end"],
+        }
+        return {"data": response}
+
+    graphql_mock.side_effect = execute
+    adapter = AccountInsights(bbclient)
+    try:
+        cached = await adapter.feeder_report(
+            feeder_id="feeder-owner", start=good["start"], end=good["end"]
+        )
+        for attempt in range(2):
+            with pytest.raises(GraphqlError) as error:
+                await adapter.feeder_report(
+                    feeder_id="feeder-owner", start=bad["start"], end=bad["end"]
+                )
+            assert error.value.error_code == "INTERNAL_SERVER_ERROR"
+            assert "synthetic-private-server-detail" not in str(error.value)
+            assert graphql_mock.await_count == attempt + 2
+            assert (
+                await adapter.feeder_report(
+                    feeder_id="feeder-owner", start=good["start"], end=good["end"]
+                )
+                == cached
+            )
+            assert graphql_mock.await_count == attempt + 2
+        failing = False
+        recovered = await adapter.feeder_report(
+            feeder_id="feeder-owner", start=bad["start"], end=bad["end"]
+        )
+        assert recovered["status"] == "available"
+        assert (
+            recovered["data"]["reportPeriod"]["startDate"] == bad["start"].isoformat()
+        )
+        assert (
+            await adapter.feeder_report(
+                feeder_id="feeder-owner", start=bad["start"], end=bad["end"]
+            )
+            == recovered
+        )
+        assert graphql_mock.await_count == 4
+    finally:
+        await adapter.async_close()
 
 
 async def test_zero_feeder_account_reads_remote_metadata_with_current_expiry(
